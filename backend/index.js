@@ -32,13 +32,14 @@ app.use(
     origin: allowed.includes("*")
       ? true
       : (origin, cb) => {
-          // Permite llamadas sin Origin (curl, health checks)
-          if (!origin) return cb(null, true);
-          return cb(null, allowed.includes(origin));
+          if (!origin) return cb(null, true);        // health, curl, etc.
+          return cb(null, allowed.includes(origin)); // true/false
         },
     credentials: true,
   })
 );
+// Preflight universal (evita 404 en OPTIONS)
+app.options("*", cors());
 
 // --- Seguridad y logs ---
 app.set("trust proxy", 1); // Render / proxies
@@ -48,6 +49,16 @@ app.use(
   })
 );
 app.use(morgan("dev"));
+
+// --- Medición de latencia por request (debug) ---
+app.use((req, res, next) => {
+  const t0 = Date.now();
+  res.on("finish", () => {
+    const ms = Date.now() - t0;
+    console.log(`[SLOWLOG] ${req.method} ${req.originalUrl} -> ${res.statusCode} ${ms}ms`);
+  });
+  next();
+});
 
 // --- Parsers ---
 app.use(express.json({ limit: "1mb" }));
@@ -68,6 +79,18 @@ app.use("/api/config", configurationRoutes);
 app.get("/health", (_req, res) => res.send("ok"));
 app.get("/api/ping", (_req, res) => res.json({ status: "ok", db: "running" }));
 
+// --- 404 por defecto (solo API) ---
+app.use("/api", (_req, res) => {
+  res.status(404).json({ error: "Not found" });
+});
+
+// --- Manejador de errores global ---
+app.use((err, _req, res, _next) => {
+  console.error("[ERROR]", err);
+  if (res.headersSent) return;
+  res.status(500).json({ error: "Internal server error" });
+});
+
 // --- Start ---
 app.listen(PORT, async () => {
   console.log(`🚀 Server listening on port ${PORT}`);
@@ -78,3 +101,5 @@ app.listen(PORT, async () => {
     console.error("❌ seedAdmin error:", e.message);
   }
 });
+
+export default app; // opcional, útil para tests
