@@ -21,54 +21,73 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 4000;
 
-// --- CORS dinámico desde env ---
+/* ------------------------- CORS dinámico (Express 5) ------------------------ */
 const allowed = (process.env.CORS_ORIGIN || "*")
   .split(",")
-  .map(s => s.trim())
+  .map((s) => s.trim())
   .filter(Boolean);
 
+const isAllowed = (origin) =>
+  allowed.includes("*") || (origin && allowed.includes(origin));
+
+// Ponemos ACAO antes para todas las requests
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (isAllowed(origin)) {
+    res.header("Access-Control-Allow-Origin", origin || "*");
+    res.header("Vary", "Origin");
+    res.header("Access-Control-Allow-Credentials", "true");
+  }
+  next();
+});
+
+// cors() para requests normales
 app.use(
   cors({
-    origin: allowed.includes("*")
-      ? true
-      : (origin, cb) => {
-          if (!origin) return cb(null, true);        // health, curl, etc.
-          return cb(null, allowed.includes(origin)); // true/false
-        },
+    origin: (origin, cb) => cb(null, isAllowed(origin) ? origin : false),
     credentials: true,
   })
 );
 
-// ✅ Preflight sin usar "*" (Express 5)
+// Preflight universal con headers completos (sin usar "*")
 app.use((req, res, next) => {
   if (req.method === "OPTIONS") {
-    res.header("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE");
+    const origin = req.headers.origin;
+    if (!isAllowed(origin)) return res.sendStatus(403);
+
+    res.header("Access-Control-Allow-Origin", origin || "*");
+    res.header("Vary", "Origin");
+    res.header("Access-Control-Allow-Credentials", "true");
+    res.header(
+      "Access-Control-Allow-Methods",
+      "GET,POST,PUT,PATCH,DELETE,OPTIONS"
+    );
     res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
     return res.sendStatus(204);
   }
   next();
 });
 
-// --- Seguridad y logs ---
+/* ------------------------ Seguridad + logs + parsers ------------------------ */
 app.set("trust proxy", 1); // Render / proxies
 app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 app.use(morgan("dev"));
 
-// --- Medición de latencia por request (debug) ---
 app.use((req, res, next) => {
   const t0 = Date.now();
   res.on("finish", () => {
     const ms = Date.now() - t0;
-    console.log(`[SLOWLOG] ${req.method} ${req.originalUrl} -> ${res.statusCode} ${ms}ms`);
+    console.log(
+      `[SLOWLOG] ${req.method} ${req.originalUrl} -> ${res.statusCode} ${ms}ms`
+    );
   });
   next();
 });
 
-// --- Parsers ---
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true }));
 
-// --- Rutas API ---
+/* ---------------------------------- Rutas ---------------------------------- */
 app.use("/api/auth", authRoutes);
 app.use("/api/contacts", contactRoutes);
 app.use("/api/tickets", ticketRoutes);
@@ -79,21 +98,22 @@ app.use("/api/reminders", reminderRoutes);
 app.use("/api/crm", crmRoutes);
 app.use("/api/config", configurationRoutes);
 
-// --- Health & ping ---
+/* ------------------------------ Health & ping ------------------------------ */
 app.get("/health", (_req, res) => res.send("ok"));
-app.get("/api/ping", (_req, res) => res.json({ status: "ok", db: "running" }));
+app.get("/api/ping", (_req, res) =>
+  res.json({ status: "ok", db: "running" })
+);
 
-// --- 404 por defecto (solo API) ---
+/* ---------------------------- 404 y error global --------------------------- */
 app.use("/api", (_req, res) => res.status(404).json({ error: "Not found" }));
 
-// --- Manejador de errores global ---
 app.use((err, _req, res, _next) => {
   console.error("[ERROR]", err);
   if (res.headersSent) return;
   res.status(500).json({ error: "Internal server error" });
 });
 
-// --- Start ---
+/* --------------------------------- Start ---------------------------------- */
 app.listen(PORT, async () => {
   console.log(`🚀 Server listening on port ${PORT}`);
   try {
@@ -104,4 +124,4 @@ app.listen(PORT, async () => {
   }
 });
 
-export default app; // opcional para tests
+export default app;
