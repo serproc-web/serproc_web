@@ -1,21 +1,107 @@
-import mysql from "mysql2/promise";
+import express from "express";
+import cors from "cors";
+import helmet from "helmet";
+import morgan from "morgan";
 import dotenv from "dotenv";
+
+import authRoutes from "./routes/auth.routes.js";
+import contactRoutes from "./routes/contact.routes.js";
+import { seedAdmin } from "./config/seedAdmin.js";
+import ticketRoutes from "./routes/ticket.routes.js";
+import contactusRoutes from "./routes/contactus.routes.js";
+import profileRoutes from "./routes/profile.routes.js";
+import notificationRoutes from "./routes/notification.routes.js";
+import reminderRoutes from "./routes/reminder.routes.js";
+import "./jobs/reminders.job.js";
+import configurationRoutes from "./routes/configuration.routes.js";
+import crmRoutes from "./routes/crm.routes.js";
 
 dotenv.config();
 
-const pool = mysql.createPool({
-  host: process.env.DB_HOST,
-  port: Number(process.env.DB_PORT || 3306),
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME,
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0,
-  acquireTimeout: 10000,
-  connectTimeout: 10000,
-  // ssl: { rejectUnauthorized: true }, // solo si Railway lo exige
+const app = express();
+const PORT = process.env.PORT || 4000;
+
+// --- CORS dinámico desde env ---
+const allowed = (process.env.CORS_ORIGIN || "*")
+  .split(",")
+  .map(s => s.trim())
+  .filter(Boolean);
+
+app.use(
+  cors({
+    origin: allowed.includes("*")
+      ? true
+      : (origin, cb) => {
+          if (!origin) return cb(null, true);        // health, curl, etc.
+          return cb(null, allowed.includes(origin)); // true/false
+        },
+    credentials: true,
+  })
+);
+
+// ✅ Preflight sin usar "*" (Express 5)
+app.use((req, res, next) => {
+  if (req.method === "OPTIONS") {
+    res.header("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE");
+    res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    return res.sendStatus(204);
+  }
+  next();
 });
 
+// --- Seguridad y logs ---
+app.set("trust proxy", 1); // Render / proxies
+app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
+app.use(morgan("dev"));
 
-export default pool;
+// --- Medición de latencia por request (debug) ---
+app.use((req, res, next) => {
+  const t0 = Date.now();
+  res.on("finish", () => {
+    const ms = Date.now() - t0;
+    console.log(`[SLOWLOG] ${req.method} ${req.originalUrl} -> ${res.statusCode} ${ms}ms`);
+  });
+  next();
+});
+
+// --- Parsers ---
+app.use(express.json({ limit: "1mb" }));
+app.use(express.urlencoded({ extended: true }));
+
+// --- Rutas API ---
+app.use("/api/auth", authRoutes);
+app.use("/api/contacts", contactRoutes);
+app.use("/api/tickets", ticketRoutes);
+app.use("/api/contactus", contactusRoutes);
+app.use("/api/notifications", notificationRoutes);
+app.use("/api/profile", profileRoutes);
+app.use("/api/reminders", reminderRoutes);
+app.use("/api/crm", crmRoutes);
+app.use("/api/config", configurationRoutes);
+
+// --- Health & ping ---
+app.get("/health", (_req, res) => res.send("ok"));
+app.get("/api/ping", (_req, res) => res.json({ status: "ok", db: "running" }));
+
+// --- 404 por defecto (solo API) ---
+app.use("/api", (_req, res) => res.status(404).json({ error: "Not found" }));
+
+// --- Manejador de errores global ---
+app.use((err, _req, res, _next) => {
+  console.error("[ERROR]", err);
+  if (res.headersSent) return;
+  res.status(500).json({ error: "Internal server error" });
+});
+
+// --- Start ---
+app.listen(PORT, async () => {
+  console.log(`🚀 Server listening on port ${PORT}`);
+  try {
+    await seedAdmin();
+    console.log("✅ seedAdmin listo");
+  } catch (e) {
+    console.error("❌ seedAdmin error:", e.message);
+  }
+});
+
+export default app; // opcional para tests

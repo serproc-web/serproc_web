@@ -38,16 +38,20 @@ app.use(
     credentials: true,
   })
 );
-// Preflight universal (evita 404 en OPTIONS)
-app.options("*", cors());
+
+// ✅ Preflight sin usar "*" (Express 5)
+app.use((req, res, next) => {
+  if (req.method === "OPTIONS") {
+    res.header("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE");
+    res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    return res.sendStatus(204);
+  }
+  next();
+});
 
 // --- Seguridad y logs ---
 app.set("trust proxy", 1); // Render / proxies
-app.use(
-  helmet({
-    crossOriginResourcePolicy: { policy: "cross-origin" },
-  })
-);
+app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 app.use(morgan("dev"));
 
 // --- Medición de latencia por request (debug) ---
@@ -80,9 +84,7 @@ app.get("/health", (_req, res) => res.send("ok"));
 app.get("/api/ping", (_req, res) => res.json({ status: "ok", db: "running" }));
 
 // --- 404 por defecto (solo API) ---
-app.use("/api", (_req, res) => {
-  res.status(404).json({ error: "Not found" });
-});
+app.use("/api", (_req, res) => res.status(404).json({ error: "Not found" }));
 
 // --- Manejador de errores global ---
 app.use((err, _req, res, _next) => {
@@ -102,4 +104,4 @@ app.listen(PORT, async () => {
   }
 });
 
-export default app; // opcional, útil para tests
+export default app; // opcional para tests
