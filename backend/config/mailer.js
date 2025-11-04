@@ -3,46 +3,116 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
-/* ─────────────────────────────  Transporter (Brevo SMTP)  ─────────────────────────────
-   Usa tus envs:
-   - SMTP_HOST=smtp-relay.brevo.com
-   - SMTP_PORT=587           (465 => secure:true)
-   - SMTP_USER=...           (identificador SMTP de Brevo)
-   - SMTP_PASS=...           (SMTP key)
-   - SMTP_FROM="Serproc Consulting <no-reply@tudominio.com>"
-   - DISABLE_EMAIL=false     (true = no envía nada)
-   - SUPPORT_TO=soporte@tudominio.com (destino para contact form)
-*/
+/* ─────────────────────────────  Configuración  ───────────────────────────── */
+
+const PROVIDER = process.env.EMAIL_PROVIDER || "smtp"; // 'brevo' o 'smtp'
+const BRAND = {
+  name: process.env.BRAND_NAME || "Serproc Consulting",
+  url: process.env.BRAND_URL || "https://serproc.onrender.com",
+  logo: process.env.BRAND_LOGO || null,
+  from: process.env.SMTP_FROM || `"Serproc Consulting" <${process.env.SMTP_USER || "serproc.noreply@gmail.com"}>`,
+};
+
+/* ─────────────────────────────  Brevo API  ───────────────────────────── */
+
+async function sendViaBrevo({ to, subject, text, html, attachments = [] }) {
+  const url = "https://api.brevo.com/v3/smtp/email";
+
+  const mappedAttachments = (attachments || []).map((a) => {
+    let contentBase64 = "";
+    if (a?.content) {
+      contentBase64 = Buffer.isBuffer(a.content)
+        ? a.content.toString("base64")
+        : Buffer.from(String(a.content)).toString("base64");
+    }
+    return {
+      name: a?.filename || a?.name || "adjunto",
+      content: contentBase64,
+    };
+  });
+
+  const fromMatch = BRAND.from.match(/^"?([^"<]+)"?\s*<(.+?)>$/);
+  const senderName = fromMatch ? fromMatch[1].trim() : BRAND.name;
+  const senderEmail = fromMatch ? fromMatch[2] : BRAND.from;
+
+  const body = {
+    sender: {
+      name: senderName,
+      email: senderEmail,
+    },
+    to: [{ email: to }],
+    subject,
+    htmlContent: html || undefined,
+    textContent: text || undefined,
+    attachment: mappedAttachments.length ? mappedAttachments : undefined,
+  };
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "api-key": process.env.BREVO_API_KEY,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    throw new Error(`Brevo ${res.status}: ${errText}`);
+  }
+
+  const result = await res.json();
+  console.log(`[mail:brevo] ✅ ${subject} -> ${to} (${result.messageId || "sent"})`);
+  return result;
+}
+
+/* ─────────────────────────────  SMTP (Nodemailer)  ───────────────────────────── */
+
 const secure = String(process.env.SMTP_PORT || "587") === "465";
 
-export const transporter = nodemailer.createTransport({
+const smtpTransporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST || "smtp-relay.brevo.com",
   port: Number(process.env.SMTP_PORT || 587),
-  secure, // 465 -> true, 587 -> false
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
+  secure,
+  auth:
+    process.env.SMTP_USER && process.env.SMTP_PASS
+      ? {
+          user: process.env.SMTP_USER,
+          pass: process.env.SMTP_PASS,
+        }
+      : undefined,
   pool: true,
   maxConnections: 2,
   maxMessages: 50,
   connectionTimeout: 7000,
   socketTimeout: 7000,
+  requireTLS: !secure,
   tls: {
     minVersion: "TLSv1.2",
   },
 });
 
+async function sendViaSMTP({ to, subject, text, html, attachments = [] }) {
+  const payload = {
+    from: BRAND.from,
+    to,
+    subject,
+    html,
+    text: text || toPlainText(html),
+    attachments,
+    headers: {
+      "X-Entity-Ref-ID": cryptoRandom(),
+      "List-Unsubscribe": `<mailto:${(BRAND.from.match(/<(.+?)>/) || [])[1] || "no-reply@example.com"}?subject=unsubscribe>`,
+    },
+  };
+
+  const info = await smtpTransporter.sendMail(payload);
+  console.log(`[mail:smtp] ✅ ${subject} -> ${to} (${info.messageId})`);
+  return info;
+}
+
 /* ─────────────────────────────  Helpers  ───────────────────────────── */
 
-const BRAND = {
-  name: process.env.BRAND_NAME || "Serproc Consulting",
-  url: process.env.BRAND_URL || "https://serproc.onrender.com",
-  logo: process.env.BRAND_LOGO || null, // URL pública opcional
-  from: process.env.SMTP_FROM || "Serproc <no-reply@example.com>",
-};
-
-// texto alterno simple (fallback para clientes sin HTML)
 const toPlainText = (html) =>
   html
     .replace(/<style[\s\S]*?<\/style>/gi, "")
@@ -50,7 +120,21 @@ const toPlainText = (html) =>
     .replace(/\s{2,}/g, " ")
     .trim();
 
-// plantilla responsive + dark-mode friendly, inline styles (mejor deliverability)
+function cryptoRandom() {
+  return Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
+const escapeHtml = (text) =>
+  String(text).replace(/[&<>"']/g, (m) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  })[m]);
+
+/* ─────────────────────────────  Template HTML  ───────────────────────────── */
+
 const emailTemplate = ({ title, preheader = "", contentHTML }) => `<!doctype html>
 <html lang="es">
 <head>
@@ -60,12 +144,10 @@ const emailTemplate = ({ title, preheader = "", contentHTML }) => `<!doctype htm
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${title}</title>
   <style>
-    /* Reset básico */
     body,table,td,a { -webkit-text-size-adjust:100%; -ms-text-size-adjust:100% }
     table,td { mso-table-lspace:0pt; mso-table-rspace:0pt }
     img { -ms-interpolation-mode:bicubic; border:0; outline:none; text-decoration:none }
     body { margin:0; padding:0; width:100%!important; }
-    /* Dark-mode tweaks */
     @media (prefers-color-scheme: dark) {
       .card { background:#101316 !important; color:#e6e6e6 !important; }
       .muted { color:#a0a7b4 !important; }
@@ -75,7 +157,6 @@ const emailTemplate = ({ title, preheader = "", contentHTML }) => `<!doctype htm
   </style>
 </head>
 <body style="background:#0ea5e9; background:linear-gradient(135deg,#1F6FEB,#00C9FF); padding:24px; font-family: ui-sans-serif, -apple-system, Segoe UI, Roboto, Helvetica, Arial;">
-  <!-- Preheader (hidden) -->
   <div style="display:none; max-height:0; overflow:hidden;">${preheader}</div>
   <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
     <tr><td align="center">
@@ -95,7 +176,7 @@ const emailTemplate = ({ title, preheader = "", contentHTML }) => `<!doctype htm
           <td style="padding:18px 24px 24px; text-align:center;" class="muted">
             <div style="font-size:12px; color:#6b7280;">© ${new Date().getFullYear()} ${BRAND.name} · Innovación tecnológica y consultoría SAP</div>
             <div style="font-size:12px; margin-top:6px;">
-              <a href="${BRAND.url}" style="color:#2563eb; text-decoration:none;">${BRAND.url.replace(/^https?:\/\//,'')}</a>
+              <a href="${BRAND.url}" style="color:#2563eb; text-decoration:none;">${BRAND.url.replace(/^https?:\/\//, "")}</a>
             </div>
           </td>
         </tr>
@@ -105,93 +186,98 @@ const emailTemplate = ({ title, preheader = "", contentHTML }) => `<!doctype htm
 </body>
 </html>`;
 
-// envío con reintentos + headers útiles
-async function deliver({ to, subject, html, text }) {
+/* ─────────────────────────────  Envío con reintentos  ───────────────────────────── */
+
+async function deliver({ to, subject, html, text, attachments = [] }) {
   if (String(process.env.DISABLE_EMAIL || "false") === "true") {
-    console.log(`[mail:disabled] ${subject} -> ${to}`);
+    console.log(`[mail:disabled] 🚫 ${subject} -> ${to}`);
     return { disabled: true };
   }
 
-  const payload = {
-    from: BRAND.from,
-    to,
-    subject,
-    html,
-    text: text || toPlainText(html),
-    headers: {
-      "X-Entity-Ref-ID": cryptoRandom(),        // ayuda a agrupar
-      "List-Unsubscribe": `<mailto:${(BRAND.from.match(/<(.+?)>/)||[])[1] || "no-reply@example.com"}?subject=unsubscribe>`,
-    },
-  };
+  const opts = { to, subject, text, html, attachments };
 
-  // 2 intentos rápidos
+  // 2 intentos con delay
   let lastErr;
   for (let i = 0; i < 2; i++) {
     try {
-      const info = await transporter.sendMail(payload);
-      if (info?.messageId) {
-        console.log(`[mail] OK ${subject} -> ${to} (${info.messageId})`);
-        return info;
+      if (PROVIDER === "brevo") {
+        return await sendViaBrevo(opts);
+      } else {
+        return await sendViaSMTP(opts);
       }
     } catch (e) {
       lastErr = e;
-      console.error(`[mail] intento ${i + 1} falló:`, e.message);
+      console.error(`[mail:${PROVIDER}] ❌ intento ${i + 1}/2 falló:`, e.message);
+      if (i === 0) await new Promise((r) => setTimeout(r, 1000)); // espera 1s antes del retry
     }
   }
   throw lastErr;
 }
 
-function cryptoRandom() {
-  // id corto legible para trazabilidad en logs
-  return Math.random().toString(36).slice(2) + Date.now().toString(36);
-}
-
 /* ─────────────────────────────  Emails listos para usar  ───────────────────────────── */
 
-// Verificación con código (botón + código grande de fallback)
+// 📧 Email de verificación con código
 export async function sendVerificationEmail(to, code) {
   const contentHTML = `
     <p>Gracias por registrarte en <strong>${BRAND.name}</strong>.</p>
     <p>Usa este código para verificar tu cuenta:</p>
-    <div style="font-size:28px; letter-spacing:10px; font-weight:800; color:#1F6FEB; text-align:center; margin:16px 0;">${code}</div>
-    <p style="margin:16px 0;">O haz clic en el siguiente botón y pega tu código:</p>
-    <div style="text-align:center; margin:18px 0;">
-      <a href="${BRAND.url}/verify" class="btn" style="background:#1F6FEB; color:#fff; padding:12px 18px; border-radius:10px; text-decoration:none; display:inline-block; font-weight:600;">Verificar cuenta</a>
+    <div style="font-size:32px; letter-spacing:8px; font-weight:800; color:#1F6FEB; text-align:center; margin:20px 0; padding:16px; background:#f0f9ff; border-radius:12px;">${code}</div>
+    <p style="margin:16px 0;">O haz clic en el siguiente botón:</p>
+    <div style="text-align:center; margin:20px 0;">
+      <a href="${BRAND.url}/verify?code=${code}" class="btn" style="background:#1F6FEB; color:#fff; padding:14px 32px; border-radius:10px; text-decoration:none; display:inline-block; font-weight:600; font-size:16px;">✓ Verificar mi cuenta</a>
     </div>
-    <p class="muted" style="font-size:12px; color:#6b7280;">El código expira en <strong>10 minutos</strong>.</p>
+    <p class="muted" style="font-size:13px; color:#6b7280; text-align:center;">⏱️ El código expira en <strong>10 minutos</strong></p>
   `;
 
   const html = emailTemplate({
-    title: "Verifica tu cuenta",
-    preheader: "Tu código de verificación de Serproc",
+    title: "🔐 Verifica tu cuenta",
+    preheader: `Tu código de verificación: ${code}`,
     contentHTML,
   });
 
   return deliver({
     to,
-    subject: "Verificación de tu cuenta - Serproc",
+    subject: `Verificación de cuenta - ${BRAND.name}`,
     html,
   });
 }
 
-// Reenvío de código (por si lo agregas en tu API)
+// 📧 Reenvío de código de verificación
 export async function resendVerificationEmail(to, code) {
   return sendVerificationEmail(to, code);
 }
 
-// Contacto desde el sitio (envíalo a tu buzón de soporte)
+// 📧 Formulario de contacto
 export async function sendContactEmail({ name, email, phone, message }) {
-  const dest = process.env.SUPPORT_TO || email; // cambia a tu inbox si prefieres
+  const dest = process.env.SUPPORT_TO || "admin@serproc.com";
   const contentHTML = `
-    <p><strong>Nuevo mensaje desde el formulario de contacto</strong></p>
-    <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%; font-size:14px;">
-      <tr><td style="padding:6px 0;"><strong>Nombre:</strong> ${name}</td></tr>
-      <tr><td style="padding:6px 0;"><strong>Correo:</strong> ${email}</td></tr>
-      <tr><td style="padding:6px 0;"><strong>Teléfono:</strong> ${phone || "No especificado"}</td></tr>
-      <tr><td style="padding:10px 0;"><strong>Mensaje:</strong><br>
-        <div style="background:#f4f6f8; padding:12px; border-radius:8px; margin-top:8px;">${(message || "").replace(/\n/g, "<br/>")}</div>
-      </td></tr>
+    <p><strong>📩 Nuevo mensaje desde el formulario de contacto</strong></p>
+    <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%; font-size:14px; margin-top:16px;">
+      <tr>
+        <td style="padding:10px; background:#f9fafb; border-left:3px solid #1F6FEB;">
+          <strong>👤 Nombre:</strong> ${escapeHtml(name)}
+        </td>
+      </tr>
+      <tr>
+        <td style="padding:10px; background:#ffffff;">
+          <strong>✉️ Correo:</strong> <a href="mailto:${escapeHtml(email)}" style="color:#2563eb;">${escapeHtml(email)}</a>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding:10px; background:#f9fafb;">
+          <strong>📱 Teléfono:</strong> ${escapeHtml(phone || "No especificado")}
+        </td>
+      </tr>
+      <tr>
+        <td style="padding:16px 10px;">
+          <strong>💬 Mensaje:</strong><br>
+          <div style="background:#f4f6f8; padding:16px; border-radius:8px; margin-top:8px; line-height:1.6;">${escapeHtml(message || "").replace(/\n/g, "<br/>")}</div>
+        </td>
+      </tr>
     </table>
+    <div style="margin-top:20px; padding:12px; background:#eff6ff; border-radius:8px; text-align:center;">
+      <a href="mailto:${escapeHtml(email)}" class="btn" style="background:#1F6FEB; color:#fff; padding:10px 24px; border-radius:8px; text-decoration:none; display:inline-block; font-weight:600;">↩️ Responder a ${escapeHtml(name)}</a>
+    </div>
   `;
 
   const html = emailTemplate({
@@ -202,17 +288,54 @@ export async function sendContactEmail({ name, email, phone, message }) {
 
   return deliver({
     to: dest,
-    subject: `Nuevo mensaje de contacto - ${name}`,
+    subject: `📩 Nuevo mensaje de contacto - ${name}`,
     html,
   });
 }
 
-/* ─────────────────────────────  Diagnóstico  ───────────────────────────── */
-export async function verifyMailer() {
+/* ─────────────────────────────  Envío genérico + Diagnóstico  ───────────────────────────── */
+
+// Envío genérico para cualquier email personalizado
+export async function sendMail(opts) {
+  return deliver(opts);
+}
+
+// Health check del sistema de correos
+export async function mailHealth() {
   try {
-    await transporter.verify();
-    return { ok: true };
+    if (PROVIDER === "brevo") {
+      if (!process.env.BREVO_API_KEY) {
+        return { 
+          ok: false, 
+          provider: "brevo", 
+          error: "BREVO_API_KEY no configurada" 
+        };
+      }
+      return { 
+        ok: true, 
+        provider: "brevo",
+        message: "Brevo API configurada correctamente" 
+      };
+    } else {
+      await smtpTransporter.verify();
+      return { 
+        ok: true, 
+        provider: "smtp",
+        host: process.env.SMTP_HOST,
+        port: process.env.SMTP_PORT,
+        message: "Conexión SMTP verificada correctamente"
+      };
+    }
   } catch (e) {
-    return { ok: false, error: e.message };
+    return { 
+      ok: false, 
+      provider: PROVIDER, 
+      error: e.message 
+    };
   }
+}
+
+// Alias para compatibilidad
+export async function verifyMailer() {
+  return mailHealth();
 }
