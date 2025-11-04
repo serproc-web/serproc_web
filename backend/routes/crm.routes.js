@@ -1,6 +1,6 @@
 // routes/crm.routes.js
 import { Router } from "express";
-import bcrypt from "bcrypt";
+import bcrypt from "bcryptjs";
 import {
   getStatsOverview,
   getStatsByWorker,
