@@ -169,6 +169,157 @@ export default function CRM() {
     ? ((overview.completados / overview.total) * 100).toFixed(1)
     : 0;
 
+  // 🔥 Generar PDF de estadísticas CRM
+  const generateCRMReport = async () => {
+    try {
+      toast.loading("Generando reporte CRM...");
+      
+      const { jsPDF } = await import("jspdf");
+      await import("jspdf-autotable");
+      
+      const doc = new jsPDF();
+      const pageWidth = doc.internal.pageSize.width;
+      
+      // Header
+      doc.setFillColor(37, 99, 235); // blue
+      doc.rect(0, 0, pageWidth, 45, "F");
+      
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(26);
+      doc.setFont(undefined, "bold");
+      doc.text("Reporte Analítico CRM", pageWidth / 2, 22, { align: "center" });
+      
+      doc.setFontSize(11);
+      doc.setFont(undefined, "normal");
+      doc.text(`Período: ${filters.from} al ${filters.to}`, pageWidth / 2, 32, { align: "center" });
+      doc.text(`Generado: ${new Date().toLocaleString("es")}`, pageWidth / 2, 39, { align: "center" });
+
+      // Métricas principales
+      doc.setTextColor(0, 0, 0);
+      doc.setFontSize(14);
+      doc.setFont(undefined, "bold");
+      doc.text("Resumen Ejecutivo", 14, 58);
+      
+      // Boxes de métricas
+      const metrics = [
+        { label: "Pendientes", value: overview.pendientes, color: [245, 158, 11] },
+        { label: "Completados", value: overview.completados, color: [16, 185, 129] },
+        { label: "Total", value: overview.total, color: [59, 130, 246] },
+        { label: "Completitud", value: `${completionRate}%`, color: [168, 85, 247] }
+      ];
+
+      let xPos = 14;
+      const yPos = 68;
+      const boxWidth = 44;
+      const boxHeight = 28;
+
+      metrics.forEach((m, i) => {
+        doc.setFillColor(...m.color, 0.15 * 255);
+        doc.roundedRect(xPos, yPos, boxWidth, boxHeight, 3, 3, "F");
+        
+        doc.setDrawColor(...m.color);
+        doc.setLineWidth(0.5);
+        doc.roundedRect(xPos, yPos, boxWidth, boxHeight, 3, 3, "S");
+        
+        doc.setTextColor(...m.color);
+        doc.setFontSize(10);
+        doc.setFont(undefined, "normal");
+        doc.text(m.label, xPos + boxWidth / 2, yPos + 10, { align: "center" });
+        
+        doc.setFontSize(16);
+        doc.setFont(undefined, "bold");
+        doc.text(String(m.value), xPos + boxWidth / 2, yPos + 22, { align: "center" });
+        
+        xPos += boxWidth + 3;
+      });
+
+      // Tabla de trabajadores
+      doc.setTextColor(0, 0, 0);
+      doc.setFontSize(14);
+      doc.setFont(undefined, "bold");
+      doc.text("Rendimiento por Trabajador", 14, 110);
+
+      const tableData = byWorker.map(w => [
+        w.name,
+        w.pendientes,
+        w.completados,
+        w.total,
+        w.total > 0 ? `${((w.completados / w.total) * 100).toFixed(1)}%` : "0%"
+      ]);
+
+      doc.autoTable({
+        head: [["Trabajador", "Pendientes", "Completados", "Total", "% Completitud"]],
+        body: tableData,
+        startY: 118,
+        theme: "striped",
+        headStyles: { 
+          fillColor: [37, 99, 235],
+          textColor: 255,
+          fontStyle: "bold",
+          fontSize: 10
+        },
+        styles: { fontSize: 9, cellPadding: 4 },
+        columnStyles: {
+          0: { cellWidth: 70 },
+          1: { cellWidth: 28, halign: "center", textColor: [245, 158, 11] },
+          2: { cellWidth: 28, halign: "center", textColor: [16, 185, 129] },
+          3: { cellWidth: 28, halign: "center", fontStyle: "bold" },
+          4: { cellWidth: 32, halign: "center" }
+        }
+      });
+
+      // Serie temporal
+      const finalY = doc.lastAutoTable.finalY + 15;
+      doc.setFontSize(14);
+      doc.setFont(undefined, "bold");
+      doc.text("Evolución Temporal", 14, finalY);
+
+      const seriesData = series.map(s => [
+        s.name,
+        s.cantidad
+      ]);
+
+      doc.autoTable({
+        head: [["Período", "Cantidad"]],
+        body: seriesData,
+        startY: finalY + 6,
+        theme: "grid",
+        headStyles: { 
+          fillColor: [6, 182, 212],
+          textColor: 255,
+          fontStyle: "bold"
+        },
+        columnStyles: {
+          0: { cellWidth: 100 },
+          1: { cellWidth: 40, halign: "center", fontStyle: "bold", textColor: [6, 182, 212] }
+        }
+      });
+
+      // Footer
+      const pageCount = doc.internal.getNumberOfPages();
+      for (let i = 1; i <= pageCount; i++) {
+        doc.setPage(i);
+        doc.setFontSize(8);
+        doc.setTextColor(128, 128, 128);
+        doc.text(
+          `Página ${i} de ${pageCount} | © 2025 Serproc Consulting - Panel CRM`,
+          pageWidth / 2,
+          doc.internal.pageSize.height - 10,
+          { align: "center" }
+        );
+      }
+
+      doc.save(`reporte_crm_${new Date().toISOString().split("T")[0]}.pdf`);
+      
+      toast.dismiss();
+      toast.success("📊 Reporte CRM generado exitosamente");
+    } catch (err) {
+      toast.dismiss();
+      toast.error("Error generando reporte");
+      console.error("Error en PDF CRM:", err);
+    }
+  };
+
   return (
     <div className="min-h-screen flex flex-col bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 font-inter text-white">
       {/* Navbar */}
@@ -224,7 +375,7 @@ export default function CRM() {
               className="space-y-6"
             >
               {/* Filtros */}
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 bg-slate-900/50 backdrop-blur-xl rounded-2xl p-5 border border-white/5">
+              <div className="grid grid-cols-1 md:grid-cols-5 gap-4 bg-slate-900/50 backdrop-blur-xl rounded-2xl p-5 border border-white/5">
                 <div>
                   <label className="block text-xs text-white/50 mb-2 font-medium">Desde</label>
                   <input 
@@ -270,6 +421,15 @@ export default function CRM() {
                     <option value="pendiente">Pendiente</option>
                     <option value="completado">Completado</option>
                   </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-white/50 mb-2 font-medium">Acciones</label>
+                  <button
+                    onClick={generateCRMReport}
+                    className="w-full p-2.5 rounded-xl bg-gradient-to-r from-red-500 to-pink-600 hover:scale-105 transition-all flex items-center justify-center gap-2 font-medium"
+                  >
+                    <FileDown size={18} /> PDF
+                  </button>
                 </div>
               </div>
 

@@ -5,7 +5,10 @@ import {
   createTicket, 
   updateTicket,
   deleteTicket,
-  getAvailableMonths
+  getAvailableMonths,
+  getUniqueClientes,
+  getUniqueUsuarios,
+  getTicketsForReport
 } from "../models/ticket.model.js";
 
 const router = Router();
@@ -29,13 +32,53 @@ router.get("/:empleadoId", async (req, res) => {
   }
 });
 
-// Obtener meses disponibles para el selector
-router.get("/:empleadoId/months", async (req, res) => {
+// 🔥 Obtener meses disponibles
+router.get("/:empleadoId/filters/months", async (req, res) => {
   try {
     const months = await getAvailableMonths(req.params.empleadoId);
     res.json(months);
   } catch (err) {
     console.error("Error obteniendo meses:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 🔥 Obtener clientes únicos
+router.get("/:empleadoId/filters/clientes", async (req, res) => {
+  try {
+    const clientes = await getUniqueClientes(req.params.empleadoId);
+    res.json(clientes);
+  } catch (err) {
+    console.error("Error obteniendo clientes:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 🔥 Obtener usuarios únicos
+router.get("/:empleadoId/filters/usuarios", async (req, res) => {
+  try {
+    const usuarios = await getUniqueUsuarios(req.params.empleadoId);
+    res.json(usuarios);
+  } catch (err) {
+    console.error("Error obteniendo usuarios:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 🔥 Obtener datos para reporte PDF
+router.get("/:empleadoId/report/data", async (req, res) => {
+  try {
+    const { empleadoId } = req.params;
+    const { month, estado } = req.query;
+    
+    const filters = {};
+    if (month) filters.month = month;
+    if (estado && estado !== "all") filters.estado = estado;
+
+    const data = await getTicketsForReport(empleadoId, filters);
+    res.json(data);
+  } catch (err) {
+    console.error("Error obteniendo datos para reporte:", err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -87,7 +130,7 @@ router.post("/bulk", async (req, res) => {
   }
 });
 
-// Actualizar campo en línea
+// Actualizar ticket
 router.patch("/:id", async (req, res) => {
   try {
     const { field, value } = req.body;

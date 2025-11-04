@@ -5,7 +5,7 @@ export async function getTicketsByEmpleado(empleadoId, filters = {}) {
   let query = "SELECT * FROM tickets WHERE user_id = ?";
   const params = [empleadoId];
 
-  // Filtro por mes (formato: YYYY-MM)
+  // Filtro por mes y año (formato: YYYY-MM)
   if (filters.month) {
     query += " AND DATE_FORMAT(fecha, '%Y-%m') = ?";
     params.push(filters.month);
@@ -17,14 +17,14 @@ export async function getTicketsByEmpleado(empleadoId, filters = {}) {
     params.push(filters.estado);
   }
 
-  // Filtro por búsqueda en actividad o cliente
-  if (filters.q) {
-    query += " AND (actividad LIKE ? OR cliente LIKE ? OR usuario_cliente LIKE ?)";
-    const searchTerm = `%${filters.q}%`;
-    params.push(searchTerm, searchTerm, searchTerm);
+  // 🔥 Búsqueda mejorada
+  if (filters.q && filters.q.trim() !== "") {
+    query += " AND (actividad LIKE ? OR cliente LIKE ? OR usuario_cliente LIKE ? OR numero LIKE ?)";
+    const searchTerm = `%${filters.q.trim()}%`;
+    params.push(searchTerm, searchTerm, searchTerm, searchTerm);
   }
 
-  query += " ORDER BY fecha DESC";
+  query += " ORDER BY fecha DESC, id DESC";
 
   const [rows] = await pool.query(query, params);
   return rows;
@@ -99,17 +99,9 @@ export async function updateTicket(id, field, value) {
     return;
   }
 
-  // Actualizar un solo campo
   const allowed = [
-    "numero",
-    "fecha",
-    "actividad",
-    "cliente",
-    "usuario_cliente",
-    "minutos",
-    "horas",
-    "observaciones",
-    "estado",
+    "numero", "fecha", "actividad", "cliente", "usuario_cliente",
+    "minutos", "horas", "observaciones", "estado",
   ];
   
   if (!allowed.includes(field)) {
@@ -129,14 +121,78 @@ export async function deleteTicket(id) {
   return true;
 }
 
-// Obtener meses disponibles para filtros
+// 🔥 Obtener meses disponibles con año
 export async function getAvailableMonths(empleadoId) {
   const [rows] = await pool.query(
     `SELECT DISTINCT DATE_FORMAT(fecha, '%Y-%m') as month
      FROM tickets
-     WHERE user_id = ?
+     WHERE user_id = ? AND fecha IS NOT NULL
      ORDER BY month DESC`,
     [empleadoId]
   );
   return rows.map(r => r.month);
+}
+
+// 🔥 Obtener clientes únicos del usuario
+export async function getUniqueClientes(empleadoId) {
+  const [rows] = await pool.query(
+    `SELECT DISTINCT cliente 
+     FROM tickets 
+     WHERE user_id = ? AND cliente IS NOT NULL AND cliente != ''
+     ORDER BY cliente ASC`,
+    [empleadoId]
+  );
+  return rows.map(r => r.cliente);
+}
+
+// 🔥 Obtener usuarios únicos del usuario
+export async function getUniqueUsuarios(empleadoId) {
+  const [rows] = await pool.query(
+    `SELECT DISTINCT usuario_cliente 
+     FROM tickets 
+     WHERE user_id = ? AND usuario_cliente IS NOT NULL AND usuario_cliente != ''
+     ORDER BY usuario_cliente ASC`,
+    [empleadoId]
+  );
+  return rows.map(r => r.usuario_cliente);
+}
+
+// 🔥 Obtener tickets para reporte PDF (con stats)
+export async function getTicketsForReport(empleadoId, filters = {}) {
+  const tickets = await getTicketsByEmpleado(empleadoId, filters);
+  
+  // Calcular estadísticas
+  const totalTickets = tickets.length;
+  const totalHoras = tickets.reduce((sum, t) => sum + parseFloat(t.horas || 0), 0);
+  const totalMinutos = tickets.reduce((sum, t) => sum + parseInt(t.minutos || 0), 0);
+  const completados = tickets.filter(t => t.estado === 'completado').length;
+  const pendientes = tickets.filter(t => t.estado === 'pendiente').length;
+  
+  // Tickets por cliente
+  const porCliente = {};
+  tickets.forEach(t => {
+    if (t.cliente) {
+      if (!porCliente[t.cliente]) {
+        porCliente[t.cliente] = { cantidad: 0, horas: 0 };
+      }
+      porCliente[t.cliente].cantidad++;
+      porCliente[t.cliente].horas += parseFloat(t.horas || 0);
+    }
+  });
+  
+  return {
+    tickets,
+    stats: {
+      totalTickets,
+      totalHoras: totalHoras.toFixed(2),
+      totalMinutos,
+      completados,
+      pendientes,
+      porCliente: Object.entries(porCliente).map(([cliente, data]) => ({
+        cliente,
+        cantidad: data.cantidad,
+        horas: data.horas.toFixed(2)
+      }))
+    }
+  };
 }

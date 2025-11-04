@@ -111,13 +111,14 @@ export async function createUser(data) {
     notify_interval = "24h",
     notify_panel = 1,
     notify_email = 1,
+    is_verified = 1, // 🔥 Auto-verificar cuando lo crea el admin
   } = data;
 
   const [result] = await pool.query(
     `INSERT INTO users (
       name, email, password, role, phone,
-      notify_enabled, notify_interval, notify_panel, notify_email
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      notify_enabled, notify_interval, notify_panel, notify_email, is_verified
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       name,
       email,
@@ -128,6 +129,7 @@ export async function createUser(data) {
       notify_interval,
       notify_panel,
       notify_email,
+      is_verified,
     ]
   );
 

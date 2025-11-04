@@ -81,14 +81,15 @@ router.post("/users", async (req, res) => {
     // 🔥 Hash de la contraseña
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Crear usuario con password hasheada
+    // 🔥 Si el admin crea un usuario, ya está verificado
     const userData = {
       ...req.body,
-      password: hashedPassword
+      password: hashedPassword,
+      is_verified: 1 // Auto-verificar cuando lo crea el admin
     };
 
     const id = await createUser(userData);
-    res.status(201).json({ id, message: "Usuario creado exitosamente" });
+    res.status(201).json({ id, message: "Usuario creado y verificado exitosamente" });
   } catch (error) {
     console.error("Error creando usuario:", error);
     

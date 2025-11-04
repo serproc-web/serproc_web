@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import api from "../utils/api";
 import { 
   Search, Upload, Download, Home, X, Plus, Edit, Trash2, 
-  Calendar, Clock, Filter, FileText, CheckCircle, AlertCircle, HelpCircle
+  Calendar, Clock, Filter, FileText, CheckCircle, AlertCircle, HelpCircle, FileDown
 } from "lucide-react";
 import { toast } from "react-hot-toast";
 import { Link } from "react-router-dom";
@@ -15,13 +15,20 @@ export default function Tickets() {
   const [selected, setSelected] = useState(null);
   const [filters, setFilters] = useState({ q: "", month: "", estado: "all" });
   const [availableMonths, setAvailableMonths] = useState([]);
+  const [uniqueClientes, setUniqueClientes] = useState([]);
+  const [uniqueUsuarios, setUniqueUsuarios] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
+  const [showClienteSuggestions, setShowClienteSuggestions] = useState(false);
+  const [showUsuarioSuggestions, setShowUsuarioSuggestions] = useState(false);
   const userId = localStorage.getItem("userId");
+  const userName = localStorage.getItem("name") || "Usuario";
 
   useEffect(() => {
     fetchTickets();
     fetchMonths();
+    fetchClientes();
+    fetchUsuarios();
   }, [filters]);
 
   function initialForm() {
@@ -55,10 +62,28 @@ export default function Tickets() {
 
   const fetchMonths = async () => {
     try {
-      const res = await api.get(`/tickets/${userId}/months`);
+      const res = await api.get(`/tickets/${userId}/filters/months`);
       setAvailableMonths(res.data);
     } catch (err) {
       console.error("Error cargando meses", err);
+    }
+  };
+
+  const fetchClientes = async () => {
+    try {
+      const res = await api.get(`/tickets/${userId}/filters/clientes`);
+      setUniqueClientes(res.data);
+    } catch (err) {
+      console.error("Error cargando clientes", err);
+    }
+  };
+
+  const fetchUsuarios = async () => {
+    try {
+      const res = await api.get(`/tickets/${userId}/filters/usuarios`);
+      setUniqueUsuarios(res.data);
+    } catch (err) {
+      console.error("Error cargando usuarios", err);
     }
   };
 
@@ -81,6 +106,164 @@ export default function Tickets() {
       
       return updated;
     });
+
+    // Mostrar sugerencias
+    if (name === "cliente") {
+      setShowClienteSuggestions(value.length > 0);
+    }
+    if (name === "usuario_cliente") {
+      setShowUsuarioSuggestions(value.length > 0);
+    }
+  };
+
+  const selectCliente = (cliente) => {
+    setForm({ ...form, cliente });
+    setShowClienteSuggestions(false);
+  };
+
+  const selectUsuario = (usuario) => {
+    setForm({ ...form, usuario_cliente: usuario });
+    setShowUsuarioSuggestions(false);
+  };
+
+  // 🔥 Generar PDF con jsPDF
+  const generatePDF = async () => {
+    try {
+      toast.loading("Generando reporte PDF...");
+      
+      const params = new URLSearchParams();
+      if (filters.month) params.append("month", filters.month);
+      if (filters.estado !== "all") params.append("estado", filters.estado);
+
+      const res = await api.get(`/tickets/${userId}/report/data?${params.toString()}`);
+      const { tickets: reportTickets, stats } = res.data;
+
+      // Importar jsPDF dinámicamente
+      const { jsPDF } = await import("jspdf");
+      await import("jspdf-autotable");
+      
+      const doc = new jsPDF();
+      const pageWidth = doc.internal.pageSize.width;
+      
+      // Header con gradiente simulado
+      doc.setFillColor(6, 182, 212); // cyan
+      doc.rect(0, 0, pageWidth, 40, "F");
+      
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(24);
+      doc.setFont(undefined, "bold");
+      doc.text("Reporte de Tickets", pageWidth / 2, 20, { align: "center" });
+      
+      doc.setFontSize(10);
+      doc.setFont(undefined, "normal");
+      doc.text(`Generado por: ${userName}`, pageWidth / 2, 28, { align: "center" });
+      doc.text(`Fecha: ${new Date().toLocaleDateString("es")}`, pageWidth / 2, 34, { align: "center" });
+
+      // Stats
+      doc.setTextColor(0, 0, 0);
+      doc.setFontSize(12);
+      doc.setFont(undefined, "bold");
+      doc.text("Resumen Ejecutivo", 14, 50);
+      
+      doc.setFontSize(10);
+      doc.setFont(undefined, "normal");
+      let yPos = 58;
+      
+      const statLines = [
+        `Total de Tickets: ${stats.totalTickets}`,
+        `Completados: ${stats.completados} | Pendientes: ${stats.pendientes}`,
+        `Total Horas: ${stats.totalHoras}h (${stats.totalMinutos} minutos)`,
+      ];
+      
+      statLines.forEach(line => {
+        doc.text(line, 14, yPos);
+        yPos += 6;
+      });
+
+      // Tickets por cliente
+      if (stats.porCliente.length > 0) {
+        yPos += 5;
+        doc.setFont(undefined, "bold");
+        doc.text("Distribución por Cliente:", 14, yPos);
+        doc.setFont(undefined, "normal");
+        yPos += 6;
+        
+        stats.porCliente.forEach(c => {
+          doc.text(`  • ${c.cliente}: ${c.cantidad} tickets (${c.horas}h)`, 14, yPos);
+          yPos += 5;
+        });
+      }
+
+      // Tabla de tickets
+      yPos += 10;
+      const tableData = reportTickets.map(t => [
+        t.numero || "-",
+        new Date(t.fecha).toLocaleDateString("es"),
+        t.actividad || "-",
+        t.cliente || "-",
+        t.usuario_cliente || "-",
+        t.minutos || "0",
+        parseFloat(t.horas || 0).toFixed(2),
+        t.estado
+      ]);
+
+      doc.autoTable({
+        head: [["Nº", "Fecha", "Actividad", "Cliente", "Usuario", "Min", "Hrs", "Estado"]],
+        body: tableData,
+        startY: yPos,
+        theme: "grid",
+        headStyles: { 
+          fillColor: [6, 182, 212],
+          textColor: 255,
+          fontStyle: "bold",
+          fontSize: 9
+        },
+        styles: { fontSize: 8, cellPadding: 2 },
+        columnStyles: {
+          0: { cellWidth: 20 },
+          1: { cellWidth: 22 },
+          2: { cellWidth: 45 },
+          3: { cellWidth: 30 },
+          4: { cellWidth: 25 },
+          5: { cellWidth: 12, halign: "right" },
+          6: { cellWidth: 12, halign: "right" },
+          7: { cellWidth: 20, halign: "center" }
+        },
+        didParseCell: (data) => {
+          if (data.section === 'body' && data.column.index === 7) {
+            if (data.cell.raw === 'completado') {
+              data.cell.styles.textColor = [16, 185, 129];
+              data.cell.styles.fontStyle = 'bold';
+            } else {
+              data.cell.styles.textColor = [245, 158, 11];
+            }
+          }
+        }
+      });
+
+      // Footer
+      const pageCount = doc.internal.getNumberOfPages();
+      for (let i = 1; i <= pageCount; i++) {
+        doc.setPage(i);
+        doc.setFontSize(8);
+        doc.setTextColor(128, 128, 128);
+        doc.text(
+          `Página ${i} de ${pageCount} | © 2025 Serproc Consulting`,
+          pageWidth / 2,
+          doc.internal.pageSize.height - 10,
+          { align: "center" }
+        );
+      }
+
+      doc.save(`reporte_tickets_${new Date().toISOString().split("T")[0]}.pdf`);
+      
+      toast.dismiss();
+      toast.success("📄 PDF generado exitosamente");
+    } catch (err) {
+      toast.dismiss();
+      toast.error("Error generando PDF");
+      console.error("Error en PDF:", err);
+    }
   };
 
   const handleSubmit = async (e) => {
@@ -376,6 +559,13 @@ export default function Tickets() {
               <Plus size={20} /> Nuevo
             </button>
             <button
+              onClick={generatePDF}
+              className="px-4 bg-red-500/20 hover:bg-red-500/30 rounded-xl transition-all border border-red-500/30"
+              title="Generar PDF"
+            >
+              <FileDown size={20} className="text-red-400" />
+            </button>
+            <button
               onClick={exportCSV}
               className="px-4 bg-emerald-500/20 hover:bg-emerald-500/30 rounded-xl transition-all border border-emerald-500/30"
               title="Exportar CSV"
@@ -532,25 +722,65 @@ export default function Tickets() {
 
                 <div>
                   <label className="block text-xs text-white/50 mb-2 font-medium">Cliente *</label>
-                  <input
-                    name="cliente"
-                    value={form.cliente}
-                    onChange={handleFormChange}
-                    className="w-full p-3 rounded-xl bg-white/5 border border-white/10 text-white focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
-                    placeholder="Nombre del cliente"
-                    required
-                  />
+                  <div className="relative">
+                    <input
+                      name="cliente"
+                      value={form.cliente}
+                      onChange={handleFormChange}
+                      onFocus={() => setShowClienteSuggestions(form.cliente.length > 0)}
+                      onBlur={() => setTimeout(() => setShowClienteSuggestions(false), 200)}
+                      className="w-full p-3 rounded-xl bg-white/5 border border-white/10 text-white focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
+                      placeholder="Nombre del cliente"
+                      required
+                    />
+                    {showClienteSuggestions && uniqueClientes.length > 0 && (
+                      <div className="absolute z-10 w-full mt-1 bg-slate-800 border border-white/10 rounded-xl max-h-48 overflow-y-auto shadow-xl">
+                        {uniqueClientes
+                          .filter(c => c.toLowerCase().includes(form.cliente.toLowerCase()))
+                          .map((cliente, idx) => (
+                            <button
+                              key={idx}
+                              type="button"
+                              onMouseDown={() => selectCliente(cliente)}
+                              className="w-full text-left px-4 py-2 hover:bg-white/10 transition-colors text-sm"
+                            >
+                              {cliente}
+                            </button>
+                          ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 <div>
                   <label className="block text-xs text-white/50 mb-2 font-medium">Usuario</label>
-                  <input
-                    name="usuario_cliente"
-                    value={form.usuario_cliente}
-                    onChange={handleFormChange}
-                    className="w-full p-3 rounded-xl bg-white/5 border border-white/10 text-white focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
-                    placeholder="Opcional"
-                  />
+                  <div className="relative">
+                    <input
+                      name="usuario_cliente"
+                      value={form.usuario_cliente}
+                      onChange={handleFormChange}
+                      onFocus={() => setShowUsuarioSuggestions(form.usuario_cliente.length > 0)}
+                      onBlur={() => setTimeout(() => setShowUsuarioSuggestions(false), 200)}
+                      className="w-full p-3 rounded-xl bg-white/5 border border-white/10 text-white focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
+                      placeholder="Opcional"
+                    />
+                    {showUsuarioSuggestions && uniqueUsuarios.length > 0 && (
+                      <div className="absolute z-10 w-full mt-1 bg-slate-800 border border-white/10 rounded-xl max-h-48 overflow-y-auto shadow-xl">
+                        {uniqueUsuarios
+                          .filter(u => u.toLowerCase().includes(form.usuario_cliente.toLowerCase()))
+                          .map((usuario, idx) => (
+                            <button
+                              key={idx}
+                              type="button"
+                              onMouseDown={() => selectUsuario(usuario)}
+                              className="w-full text-left px-4 py-2 hover:bg-white/10 transition-colors text-sm"
+                            >
+                              {usuario}
+                            </button>
+                          ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 <div>
