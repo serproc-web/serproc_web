@@ -1,25 +1,30 @@
+// mailer.js
 import nodemailer from "nodemailer";
 import dotenv from "dotenv";
 
 dotenv.config();
 
-/* ─────────────────────────────  Configuración  ───────────────────────────── */
+/* ─────────────────────────────  Configuración base  ───────────────────────────── */
 
-const PROVIDER = process.env.EMAIL_PROVIDER || "smtp"; // 'brevo' o 'smtp'
+const PROVIDER = (process.env.EMAIL_PROVIDER || "smtp").toLowerCase(); // 'smtp' | 'brevo'
 const BRAND = {
   name: process.env.BRAND_NAME || "Serproc Consulting",
   url: process.env.BRAND_URL || "https://serproc.onrender.com",
-  logo: process.env.BRAND_LOGO || null,
-  from: process.env.SMTP_FROM || `"Serproc Consulting" <${process.env.SMTP_USER || "serproc.noreply@gmail.com"}>`,
+  logo: process.env.BRAND_LOGO || "",
 };
+const FROM = (() => {
+  const raw =
+    process.env.SMTP_FROM ||
+    process.env.MAIL_FROM ||
+    (process.env.SMTP_USER ? `${BRAND.name} <${process.env.SES_SMTP_USER}>` : "no-reply@example.com");
+  if (/<.+>/.test(raw)) return raw;
+  return `${BRAND.name} <${raw}>`;
+})();
 
-/* ─────────────────────────────  Brevo API  ───────────────────────────── */
+/* ─────────────────────────────  Brevo API (opcional)  ───────────────────────────── */
 
 async function sendViaBrevo({ to, subject, text, html, attachments = [] }) {
-  if (!process.env.BREVO_API_KEY) {
-    throw new Error("BREVO_API_KEY no configurada");
-  }
-
+  if (!process.env.BREVO_API_KEY) throw new Error("BREVO_API_KEY no configurada");
   const url = "https://api.brevo.com/v3/smtp/email";
 
   const mappedAttachments = (attachments || []).map((a) => {
@@ -29,34 +34,20 @@ async function sendViaBrevo({ to, subject, text, html, attachments = [] }) {
         ? a.content.toString("base64")
         : Buffer.from(String(a.content)).toString("base64");
     }
-    return {
-      name: a?.filename || a?.name || "adjunto",
-      content: contentBase64,
-    };
+    return { name: a?.filename || a?.name || "adjunto", content: contentBase64 };
   });
 
-  // Extraer email y nombre del sender
-  const fromMatch = BRAND.from.match(/^"?([^"<]+)"?\s*<(.+?)>$/);
-  const senderName = fromMatch ? fromMatch[1].trim() : BRAND.name;
-  const senderEmail = fromMatch ? fromMatch[2] : BRAND.from.replace(/[<>"]/g, "").trim();
+  const senderName = (FROM.split("<")[0] || "").replace(/"/g, "").trim() || BRAND.name;
+  const senderEmail = (FROM.match(/<(.+?)>/) || [])[1] || FROM;
 
   const body = {
-    sender: {
-      name: senderName,
-      email: senderEmail,
-    },
+    sender: { name: senderName, email: senderEmail },
     to: [{ email: to }],
     subject,
-    htmlContent: html || text || "<p>Email sin contenido</p>",
-    textContent: text || toPlainText(html),
+    htmlContent: html || undefined,
+    textContent: (text || toPlainText(html)).trim() || undefined,
+    attachment: mappedAttachments.length ? mappedAttachments : undefined,
   };
-
-  // Solo agregar attachments si existen
-  if (mappedAttachments.length > 0) {
-    body.attachment = mappedAttachments;
-  }
-
-  console.log(`[mail:brevo] 📤 Enviando a ${to} desde ${senderEmail}...`);
 
   const res = await fetch(url, {
     method: "POST",
@@ -68,93 +59,71 @@ async function sendViaBrevo({ to, subject, text, html, attachments = [] }) {
     body: JSON.stringify(body),
   });
 
-  const responseText = await res.text();
-
+  const responseText = await res.text().catch(() => "");
   if (!res.ok) {
-    // Errores comunes de Brevo
-    if (res.status === 401) {
-      throw new Error("❌ BREVO_API_KEY inválida o expirada");
-    }
-    if (res.status === 400 && responseText.includes("sender")) {
-      throw new Error(`❌ Email sender '${senderEmail}' no verificado en Brevo. Verifica tu cuenta.`);
-    }
+    if (res.status === 401) throw new Error("BREVO_API_KEY inválida o expirada");
+    if (res.status === 400 && responseText.includes("sender"))
+      throw new Error(`Email sender '${senderEmail}' no verificado en Brevo`);
     throw new Error(`Brevo ${res.status}: ${responseText}`);
   }
-
-  const result = JSON.parse(responseText);
-  console.log(`[mail:brevo] ✅ ${subject} -> ${to} (ID: ${result.messageId || "sent"})`);
-  return result;
+  return true;
 }
 
-/* ─────────────────────────────  SMTP (Nodemailer)  ───────────────────────────── */
+/* ─────────────────────────────  SMTP (Brevo 587 STARTTLS)  ───────────────────────────── */
 
-const secure = String(process.env.SMTP_PORT || "587") === "465";
+const smtpPort = Number(process.env.SMTP_PORT || 587);
+const isSSL465 = smtpPort === 465;
 
 const smtpTransporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST || "smtp-relay.brevo.com",
-  port: Number(process.env.SMTP_PORT || 587),
-  secure: false, // Brevo usa 587 sin SSL directo
+  port: smtpPort,
+  secure: isSSL465,          // true solo para 465 (SSL puro). Brevo usa 587 -> false
+  requireTLS: !isSSL465,     // STARTTLS obligatorio cuando no es 465
   auth:
     process.env.SMTP_USER && process.env.SMTP_PASS
-      ? {
-          user: process.env.SMTP_USER,
-          pass: process.env.SMTP_PASS,
-        }
+      ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
       : undefined,
+  tls: { minVersion: "TLSv1.2" },
   pool: true,
   maxConnections: 2,
   maxMessages: 50,
-  connectionTimeout: 10000, // más tiempo
-  socketTimeout: 10000,
-  requireTLS: true, // STARTTLS obligatorio para Brevo
-  tls: {
-    minVersion: "TLSv1.2",
-    rejectUnauthorized: false, // por si hay problemas con certificados
-  },
-  debug: true, // ACTIVA ESTO PARA VER QUÉ PASA
-  logger: true, // logs detallados
+  connectionTimeout: 15000,
+  socketTimeout: 15000,
 });
 
 async function sendViaSMTP({ to, subject, text, html, attachments = [] }) {
-  const payload = {
-    from: BRAND.from,
+  const info = await smtpTransporter.sendMail({
+    from: FROM,
     to,
     subject,
-    html,
-    text: text || toPlainText(html),
+    html: html || undefined,
+    text: (text || toPlainText(html)).trim() || undefined,
     attachments,
     headers: {
       "X-Entity-Ref-ID": cryptoRandom(),
-      "List-Unsubscribe": `<mailto:${(BRAND.from.match(/<(.+?)>/) || [])[1] || "no-reply@example.com"}?subject=unsubscribe>`,
     },
-  };
-
-  const info = await smtpTransporter.sendMail(payload);
-  console.log(`[mail:smtp] ✅ ${subject} -> ${to} (${info.messageId})`);
-  return info;
+  });
+  return { id: info.messageId };
 }
 
 /* ─────────────────────────────  Helpers  ───────────────────────────── */
 
-const toPlainText = (html) =>
-  html
+function toPlainText(html) {
+  if (!html) return "";
+  return String(html)
     .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
     .replace(/<[^>]+>/g, " ")
     .replace(/\s{2,}/g, " ")
     .trim();
+}
 
 function cryptoRandom() {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 
 const escapeHtml = (text) =>
-  String(text).replace(/[&<>"']/g, (m) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#39;",
-  })[m]);
+  String(text).replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
 
 /* ─────────────────────────────  Template HTML  ───────────────────────────── */
 
@@ -197,7 +166,7 @@ const emailTemplate = ({ title, preheader = "", contentHTML }) => `<!doctype htm
         </tr>
         <tr>
           <td style="padding:18px 24px 24px; text-align:center;" class="muted">
-            <div style="font-size:12px; color:#6b7280;">© ${new Date().getFullYear()} ${BRAND.name} · Innovación tecnológica y consultoría SAP</div>
+            <div style="font-size:12px; color:#6b7280;">© ${new Date().getFullYear()} ${BRAND.name}</div>
             <div style="font-size:12px; margin-top:6px;">
               <a href="${BRAND.url}" style="color:#2563eb; text-decoration:none;">${BRAND.url.replace(/^https?:\/\//, "")}</a>
             </div>
@@ -213,25 +182,18 @@ const emailTemplate = ({ title, preheader = "", contentHTML }) => `<!doctype htm
 
 async function deliver({ to, subject, html, text, attachments = [] }) {
   if (String(process.env.DISABLE_EMAIL || "false") === "true") {
-    console.log(`[mail:disabled] 🚫 ${subject} -> ${to}`);
     return { disabled: true };
   }
+  const opts = { to, subject, html, text, attachments };
 
-  const opts = { to, subject, text, html, attachments };
-
-  // 2 intentos con delay
   let lastErr;
   for (let i = 0; i < 2; i++) {
     try {
-      if (PROVIDER === "brevo") {
-        return await sendViaBrevo(opts);
-      } else {
-        return await sendViaSMTP(opts);
-      }
+      if (PROVIDER === "brevo") return await sendViaBrevo(opts);
+      return await sendViaSMTP(opts);
     } catch (e) {
       lastErr = e;
-      console.error(`[mail:${PROVIDER}] ❌ intento ${i + 1}/2 falló:`, e.message);
-      if (i === 0) await new Promise((r) => setTimeout(r, 1000)); // espera 1s antes del retry
+      if (i === 0) await new Promise((r) => setTimeout(r, 1000));
     }
   }
   throw lastErr;
@@ -239,7 +201,6 @@ async function deliver({ to, subject, html, text, attachments = [] }) {
 
 /* ─────────────────────────────  Emails listos para usar  ───────────────────────────── */
 
-// 📧 Email de verificación con código
 export async function sendVerificationEmail(to, code) {
   const contentHTML = `
     <p>Gracias por registrarte en <strong>${BRAND.name}</strong>.</p>
@@ -247,7 +208,7 @@ export async function sendVerificationEmail(to, code) {
     <div style="font-size:32px; letter-spacing:8px; font-weight:800; color:#1F6FEB; text-align:center; margin:20px 0; padding:16px; background:#f0f9ff; border-radius:12px;">${code}</div>
     <p style="margin:16px 0;">O haz clic en el siguiente botón:</p>
     <div style="text-align:center; margin:20px 0;">
-      <a href="${BRAND.url}/verify?code=${code}" class="btn" style="background:#1F6FEB; color:#fff; padding:14px 32px; border-radius:10px; text-decoration:none; display:inline-block; font-weight:600; font-size:16px;">✓ Verificar mi cuenta</a>
+      <a href="${BRAND.url}/verify?code=${code}" class="btn" style="background:#1F6FEB; color:#fff; padding:14px 32px; border-radius:10px; text-decoration:none; display:inline-block; font-weight:600;">✓ Verificar mi cuenta</a>
     </div>
     <p class="muted" style="font-size:13px; color:#6b7280; text-align:center;">⏱️ El código expira en <strong>10 minutos</strong></p>
   `;
@@ -258,107 +219,49 @@ export async function sendVerificationEmail(to, code) {
     contentHTML,
   });
 
-  return deliver({
-    to,
-    subject: `Verificación de cuenta - ${BRAND.name}`,
-    html,
-  });
+  return deliver({ to, subject: `Verificación de cuenta - ${BRAND.name}`, html });
 }
 
-// 📧 Reenvío de código de verificación
 export async function resendVerificationEmail(to, code) {
   return sendVerificationEmail(to, code);
 }
 
-// 📧 Formulario de contacto
 export async function sendContactEmail({ name, email, phone, message }) {
   const dest = process.env.SUPPORT_TO || "admin@serproc.com";
+
   const contentHTML = `
     <p><strong>📩 Nuevo mensaje desde el formulario de contacto</strong></p>
     <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%; font-size:14px; margin-top:16px;">
-      <tr>
-        <td style="padding:10px; background:#f9fafb; border-left:3px solid #1F6FEB;">
-          <strong>👤 Nombre:</strong> ${escapeHtml(name)}
-        </td>
-      </tr>
-      <tr>
-        <td style="padding:10px; background:#ffffff;">
-          <strong>✉️ Correo:</strong> <a href="mailto:${escapeHtml(email)}" style="color:#2563eb;">${escapeHtml(email)}</a>
-        </td>
-      </tr>
-      <tr>
-        <td style="padding:10px; background:#f9fafb;">
-          <strong>📱 Teléfono:</strong> ${escapeHtml(phone || "No especificado")}
-        </td>
-      </tr>
-      <tr>
-        <td style="padding:16px 10px;">
-          <strong>💬 Mensaje:</strong><br>
-          <div style="background:#f4f6f8; padding:16px; border-radius:8px; margin-top:8px; line-height:1.6;">${escapeHtml(message || "").replace(/\n/g, "<br/>")}</div>
-        </td>
-      </tr>
+      <tr><td style="padding:10px; background:#f9fafb; border-left:3px solid #1F6FEB;"><strong>👤 Nombre:</strong> ${escapeHtml(name)}</td></tr>
+      <tr><td style="padding:10px; background:#ffffff;"><strong>✉️ Correo:</strong> <a href="mailto:${escapeHtml(email)}" style="color:#2563eb;">${escapeHtml(email)}</a></td></tr>
+      <tr><td style="padding:10px; background:#f9fafb;"><strong>📱 Teléfono:</strong> ${escapeHtml(phone || "No especificado")}</td></tr>
+      <tr><td style="padding:16px 10px;"><strong>💬 Mensaje:</strong><br><div style="background:#f4f6f8; padding:16px; border-radius:8px; margin-top:8px; line-height:1.6;">${escapeHtml(message || "").replace(/\n/g, "<br/>")}</div></td></tr>
     </table>
-    <div style="margin-top:20px; padding:12px; background:#eff6ff; border-radius:8px; text-align:center;">
-      <a href="mailto:${escapeHtml(email)}" class="btn" style="background:#1F6FEB; color:#fff; padding:10px 24px; border-radius:8px; text-decoration:none; display:inline-block; font-weight:600;">↩️ Responder a ${escapeHtml(name)}</a>
-    </div>
   `;
 
-  const html = emailTemplate({
-    title: "📬 Nuevo mensaje de contacto",
-    preheader: `Mensaje de ${name}`,
-    contentHTML,
-  });
-
-  return deliver({
-    to: dest,
-    subject: `📩 Nuevo mensaje de contacto - ${name}`,
-    html,
-  });
+  const html = emailTemplate({ title: "📬 Nuevo mensaje de contacto", preheader: `Mensaje de ${name}`, contentHTML });
+  return deliver({ to: dest, subject: `📩 Nuevo mensaje de contacto - ${name}`, html });
 }
 
-/* ─────────────────────────────  Envío genérico + Diagnóstico  ───────────────────────────── */
+/* ─────────────────────────────  API pública  ───────────────────────────── */
 
-// Envío genérico para cualquier email personalizado
 export async function sendMail(opts) {
   return deliver(opts);
 }
 
-// Health check del sistema de correos
 export async function mailHealth() {
   try {
     if (PROVIDER === "brevo") {
-      if (!process.env.BREVO_API_KEY) {
-        return { 
-          ok: false, 
-          provider: "brevo", 
-          error: "BREVO_API_KEY no configurada" 
-        };
-      }
-      return { 
-        ok: true, 
-        provider: "brevo",
-        message: "Brevo API configurada correctamente" 
-      };
-    } else {
-      await smtpTransporter.verify();
-      return { 
-        ok: true, 
-        provider: "smtp",
-        host: process.env.SMTP_HOST,
-        port: process.env.SMTP_PORT,
-        message: "Conexión SMTP verificada correctamente"
-      };
+      if (!process.env.BREVO_API_KEY) return { ok: false, provider: "brevo", error: "BREVO_API_KEY no configurada" };
+      return { ok: true, provider: "brevo" };
     }
+    await smtpTransporter.verify();
+    return { ok: true, provider: "smtp", host: process.env.SMTP_HOST, port: process.env.SMTP_PORT };
   } catch (e) {
-    return { 
-      ok: false, 
-      provider: PROVIDER, 
-      error: e.message 
-    };
+    return { ok: false, provider: PROVIDER, error: e.message };
   }
 }
 
-// Alias para compatibilidad
 export async function verifyMailer() {
   return mailHealth();
 }
