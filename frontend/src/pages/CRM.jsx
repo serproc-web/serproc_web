@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
   AreaChart, Area, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
-  XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, CartesianGrid
+  XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, CartesianGrid, FileDown
 } from "recharts";
 import { toast } from "react-hot-toast";
 import api from "../utils/api";
