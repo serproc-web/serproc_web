@@ -1,29 +1,38 @@
+// frontend/src/pages/Tickets.jsx
 import { useState, useEffect } from "react";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import api from "../utils/api";
-import { Search, Upload, Download, Home, XCircle } from "lucide-react";
-import { toast } from "react-hot-toast"; // 👈 ya lo usas en Login.jsx
+import { 
+  Search, Upload, Download, Home, X, Plus, Edit, Trash2, 
+  Calendar, Clock, Filter, FileText, CheckCircle, AlertCircle, HelpCircle
+} from "lucide-react";
+import { toast } from "react-hot-toast";
+import { Link } from "react-router-dom";
 
 export default function Tickets() {
   const [tickets, setTickets] = useState([]);
   const [form, setForm] = useState(initialForm());
   const [selected, setSelected] = useState(null);
-  const [search, setSearch] = useState("");
+  const [filters, setFilters] = useState({ q: "", month: "", estado: "all" });
+  const [availableMonths, setAvailableMonths] = useState([]);
+  const [showModal, setShowModal] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
   const userId = localStorage.getItem("userId");
 
   useEffect(() => {
     fetchTickets();
-  }, []);
+    fetchMonths();
+  }, [filters]);
 
   function initialForm() {
     return {
       numero: "",
-      fecha: "",
+      fecha: new Date().toISOString().split("T")[0],
       actividad: "",
       cliente: "",
       usuario_cliente: "",
       minutos: "",
-      horas: "",
+      horas: "0",
       observaciones: "",
       estado: "pendiente",
     };
@@ -31,52 +40,57 @@ export default function Tickets() {
 
   const fetchTickets = async () => {
     try {
-      const res = await api.get(`/tickets/${userId}`);
+      const params = new URLSearchParams();
+      if (filters.q) params.append("q", filters.q);
+      if (filters.month) params.append("month", filters.month);
+      if (filters.estado !== "all") params.append("estado", filters.estado);
+
+      const res = await api.get(`/tickets/${userId}?${params.toString()}`);
       setTickets(res.data);
     } catch (err) {
       console.error("Error al cargar tickets", err);
+      toast.error("Error cargando tickets");
+    }
+  };
+
+  const fetchMonths = async () => {
+    try {
+      const res = await api.get(`/tickets/${userId}/months`);
+      setAvailableMonths(res.data);
+    } catch (err) {
+      console.error("Error cargando meses", err);
     }
   };
 
   const formatDate = (date) => {
     if (!date) return "";
-    const d = new Date(date);
-    return d.toISOString().split("T")[0];
+    return new Date(date).toISOString().split("T")[0];
   };
 
   const handleFormChange = (e) => {
     const { name, value } = e.target;
+    
     setForm((prev) => {
-      if (!selected && !prev.fecha) {
-        return { ...prev, [name]: value, fecha: formatDate(new Date()) };
+      const updated = { ...prev, [name]: value };
+      
+      // 🔥 Cálculo automático de horas cuando cambian los minutos
+      if (name === "minutos") {
+        const mins = parseFloat(value) || 0;
+        updated.horas = (mins / 60).toFixed(2);
       }
-      return { ...prev, [name]: value };
+      
+      return updated;
     });
   };
-const handleBulkUpload = async (csvData) => {
-  try {
-    // cada fila del CSV ya está mapeada en "csvData"
-    const bulk = csvData.map((row) => ({
-      ...row,
-      estado: "completado", // ✅ forzar estado
-    }));
 
-    toast.loading("Subiendo tickets...");
-
-    await api.post("/tickets/bulk", { tickets: bulk });
-
-    toast.dismiss();
-    toast.success("Carga masiva completada con éxito ✅");
-
-    fetchTickets();
-  } catch (err) {
-    toast.dismiss();
-    toast.error("Error al cargar tickets masivos ❌");
-    console.error("Error en carga masiva", err);
-  }
-};
   const handleSubmit = async (e) => {
     e.preventDefault();
+    
+    if (!form.actividad || !form.cliente) {
+      toast.error("Actividad y cliente son requeridos");
+      return;
+    }
+
     try {
       const payload = {
         ...form,
@@ -86,223 +100,600 @@ const handleBulkUpload = async (csvData) => {
 
       if (selected) {
         await api.patch(`/tickets/${selected.id}`, { field: "all", value: payload });
+        toast.success("Ticket actualizado ✅");
       } else {
         await api.post("/tickets", payload);
+        toast.success("Ticket creado ✅");
       }
 
       setForm(initialForm());
       setSelected(null);
+      setShowModal(false);
       fetchTickets();
     } catch (err) {
       console.error("Error al guardar ticket", err);
+      toast.error("Error guardando ticket ❌");
     }
   };
 
   const handleSelect = (ticket) => {
     setSelected(ticket);
     setForm({ ...ticket, fecha: formatDate(ticket.fecha) });
+    setShowModal(true);
   };
 
   const handleCancel = () => {
     setSelected(null);
     setForm(initialForm());
+    setShowModal(false);
   };
 
-  // Filtrado por actividad
-  const filteredTickets = tickets.filter((t) =>
-    t.actividad?.toLowerCase().includes(search.toLowerCase())
-  );
-
-  // Exportar a CSV
-  const exportCSV = () => {
-    const headers = Object.keys(initialForm()).join(",");
-    const rows = tickets
-      .map((t) =>
-        Object.keys(initialForm())
-          .map((k) => `"${t[k] || ""}"`)
-          .join(",")
-      )
-      .join("\n");
-    const blob = new Blob([headers + "\n" + rows], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "tickets.csv";
-    a.click();
-  };
-
-  // Importar CSV
-  const importCSV = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const text = await file.text();
-    const lines = text.split("\n").slice(1);
-    const bulk = lines.map((line) => {
-  const [numero, fecha, actividad, cliente, usuario_cliente, minutos, horas, observaciones] =
-    line.split(",");
-
-  return {
-    user_id: userId,
-    numero,
-    fecha: fecha || formatDate(new Date()),
-    actividad,
-    cliente,
-    usuario_cliente,
-    minutos,
-    horas,
-    observaciones,
-    estado: "completado",  // 👈 siempre completado
-  };
-});
-
-
-
+  const handleDelete = async (id) => {
+    if (!confirm("¿Eliminar este ticket?")) return;
+    
     try {
-      await api.post("/tickets/bulk", { tickets: bulk });
+      await api.delete(`/tickets/${id}`);
+      toast.success("Ticket eliminado ✅");
       fetchTickets();
     } catch (err) {
-      console.error("Error en carga masiva", err);
+      toast.error("Error eliminando ticket ❌");
     }
   };
 
+  const exportCSV = () => {
+    const headers = "Numero Ticket,Fecha,Actividad,Minutos,Horas,Cliente,Usuario,Observaciones";
+    const rows = tickets
+      .map((t) => 
+        `"${t.numero || ""}","${formatDate(t.fecha)}","${t.actividad || ""}","${t.minutos || ""}","${t.horas || ""}","${t.cliente || ""}","${t.usuario_cliente || ""}","${t.observaciones || ""}"`
+      )
+      .join("\n");
+    
+    const blob = new Blob([headers + "\n" + rows], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `tickets_${new Date().toISOString().split("T")[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast.success("CSV exportado ✅");
+  };
+
+  const importCSV = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const lines = text.split("\n").filter(l => l.trim());
+      
+      if (lines.length < 2) {
+        toast.error("El archivo CSV está vacío");
+        return;
+      }
+
+      // Parsear el header
+      const headers = lines[0].split(",").map(h => h.trim().toLowerCase());
+      
+      // Mapeo de headers del CSV a campos de la BD
+      const fieldMap = {
+        "numero ticket": "numero",
+        "numero": "numero",
+        "fecha": "fecha",
+        "actividad": "actividad",
+        "minutos": "minutos",
+        "horas": "horas",
+        "cliente": "cliente",
+        "usuario del cliente (nombre)": "usuario_cliente",
+        "usuario": "usuario_cliente",
+        "observaciones": "observaciones"
+      };
+
+      const bulk = [];
+
+      for (let i = 1; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (!line) continue;
+
+        // Parsear valores respetando comillas
+        const values = [];
+        let current = "";
+        let inQuotes = false;
+
+        for (let char of line) {
+          if (char === '"') {
+            inQuotes = !inQuotes;
+          } else if (char === ',' && !inQuotes) {
+            values.push(current.trim());
+            current = "";
+          } else {
+            current += char;
+          }
+        }
+        values.push(current.trim());
+
+        // Construir objeto ticket
+        const ticket = {
+          user_id: userId,
+          numero: "",
+          fecha: formatDate(new Date()),
+          actividad: "",
+          cliente: "",
+          usuario_cliente: "",
+          minutos: "0",
+          horas: "0",
+          observaciones: "",
+          estado: "completado"
+        };
+
+        // Mapear valores según headers
+        headers.forEach((header, idx) => {
+          const fieldName = fieldMap[header];
+          if (fieldName && values[idx]) {
+            let value = values[idx].trim();
+            
+            // Limpiar comillas
+            value = value.replace(/^"|"$/g, "");
+            
+            if (!value) return;
+
+            if (fieldName === "fecha") {
+              // Convertir fecha DD/MM/YYYY a YYYY-MM-DD
+              if (value.includes("/")) {
+                const parts = value.split("/");
+                if (parts.length === 3) {
+                  const day = parts[0].padStart(2, "0");
+                  const month = parts[1].padStart(2, "0");
+                  const year = parts[2];
+                  ticket.fecha = `${year}-${month}-${day}`;
+                }
+              } else {
+                ticket.fecha = value;
+              }
+            } else if (fieldName === "minutos" || fieldName === "horas") {
+              // Convertir comas decimales a puntos
+              value = value.replace(",", ".");
+              ticket[fieldName] = value;
+            } else {
+              ticket[fieldName] = value;
+            }
+          }
+        });
+
+        // Solo agregar si tiene al menos actividad o cliente
+        if (ticket.actividad || ticket.cliente) {
+          bulk.push(ticket);
+        }
+      }
+
+      if (bulk.length === 0) {
+        toast.error("No se encontraron tickets válidos en el CSV");
+        return;
+      }
+
+      const loadingToast = toast.loading(`Importando ${bulk.length} tickets...`);
+      
+      await api.post("/tickets/bulk", { tickets: bulk });
+      
+      toast.dismiss(loadingToast);
+      toast.success(`✅ ${bulk.length} tickets importados correctamente`);
+      
+      fetchTickets();
+      
+      // Limpiar input
+      e.target.value = "";
+    } catch (err) {
+      toast.dismiss();
+      toast.error("❌ Error importando CSV");
+      console.error("Error en importación:", err);
+    }
+  };
+
+  const totalHoras = tickets.reduce((sum, t) => sum + parseFloat(t.horas || 0), 0);
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-azulCorp via-azulTec to-cian font-poppins text-white">
-      {/* Navbar */}
-      <header className="flex items-center justify-between px-8 py-4 bg-white/10 backdrop-blur-xl shadow-lg border-b border-white/20">
-        <div className="flex items-center space-x-3">
-          <Home size={20} />
-          <span className="font-bold tracking-wide">Gestión de Tiquetes</span>
+    <div className="min-h-screen flex flex-col bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 font-inter text-white">
+      {/* Header */}
+      <header className="flex items-center justify-between px-8 py-4 bg-slate-950/80 backdrop-blur-2xl shadow-2xl border-b border-white/5 sticky top-0 z-40">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center">
+            <FileText size={22} className="text-white" />
+          </div>
+          <div>
+            <h1 className="text-xl font-semibold tracking-tight">Gestión de Tickets</h1>
+            <p className="text-xs text-white/50">Control de actividades</p>
+          </div>
         </div>
-        <button
-          onClick={() => (window.location.href = "/home")}
-          className="px-4 py-2 bg-cian rounded-lg hover:bg-turquesa transition"
-        >
-          Volver al Home
-        </button>
+        <Link to="/home" className="flex items-center gap-2 bg-white/5 hover:bg-white/10 px-4 py-2 rounded-xl transition-all">
+          <Home size={18} />
+          <span className="hidden sm:inline">Inicio</span>
+        </Link>
       </header>
 
-      {/* Formulario */}
-      <motion.form
-        onSubmit={handleSubmit}
-        initial={{ opacity: 0, y: -20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.6 }}
-        className="max-w-4xl mx-auto bg-white/10 backdrop-blur-xl rounded-3xl shadow-2xl p-8 border border-white/30 space-y-4 mt-6"
-      >
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {Object.keys(initialForm()).map((key) =>
-            key === "observaciones" ? (
-              <textarea
-                key={key}
-                name={key}
-                placeholder="Observaciones"
-                value={form[key]}
-                onChange={handleFormChange}
-                className="p-3 rounded-xl bg-white/20 placeholder-white/70 border focus:ring-2 focus:ring-cian outline-none md:col-span-2"
-              />
-            ) : key === "estado" ? (
-              <select
-                key={key}
-                name={key}
-                value={form[key]}
-                onChange={handleFormChange}
-                className="p-3 rounded-xl bg-white/20 border focus:ring-2 focus:ring-cian outline-none md:col-span-2"
-              >
-                <option value="pendiente">Pendiente</option>
-                <option value="completado">Completado</option>
-              </select>
-            ) : (
-              <input
-                key={key}
-                type={key === "fecha" ? "date" : "text"}
-                name={key}
-                placeholder={key}
-                value={form[key]}
-                onChange={handleFormChange}
-                className="p-3 rounded-xl bg-white/20 placeholder-white/70 border focus:ring-2 focus:ring-cian outline-none"
-              />
-            )
-          )}
+      <main className="flex-1 p-4 sm:p-8 space-y-6">
+        {/* Filtros y acciones */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          {/* Búsqueda */}
+          <div className="md:col-span-2 relative">
+            <Search className="absolute left-3 top-3 text-white/40" size={18} />
+            <input
+              type="text"
+              placeholder="Buscar por actividad, cliente..."
+              value={filters.q}
+              onChange={(e) => setFilters({ ...filters, q: e.target.value })}
+              className="w-full pl-10 p-3 rounded-xl bg-white/5 border border-white/10 text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
+            />
+          </div>
+
+          {/* Filtro por mes */}
+          <select
+            value={filters.month}
+            onChange={(e) => setFilters({ ...filters, month: e.target.value })}
+            className="p-3 rounded-xl bg-white/5 border border-white/10 text-white focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
+          >
+            <option value="">Todos los meses</option>
+            {availableMonths.map((m) => (
+              <option key={m} value={m}>
+                {new Date(m + "-01").toLocaleDateString("es", { month: "long", year: "numeric" })}
+              </option>
+            ))}
+          </select>
+
+          {/* Filtro por estado */}
+          <select
+            value={filters.estado}
+            onChange={(e) => setFilters({ ...filters, estado: e.target.value })}
+            className="p-3 rounded-xl bg-white/5 border border-white/10 text-white focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
+          >
+            <option value="all">Todos los estados</option>
+            <option value="pendiente">Pendiente</option>
+            <option value="completado">Completado</option>
+          </select>
         </div>
 
-        {/* Botones */}
-        <div className="flex space-x-4 mt-4">
-          <motion.button
-            whileTap={{ scale: 0.95 }}
-            className="flex-1 bg-gradient-to-r from-cian to-turquesa py-3 rounded-xl font-semibold shadow-lg hover:opacity-90 transition"
-          >
-            {selected ? "Actualizar Ticket" : "Registrar Ticket"}
-          </motion.button>
-          {selected && (
-            <motion.button
-              type="button"
-              whileTap={{ scale: 0.95 }}
-              onClick={handleCancel}
-              className="flex-1 bg-red-500 py-3 rounded-xl font-semibold shadow-lg hover:bg-red-600 transition flex items-center justify-center space-x-2"
+        {/* Stats y acciones */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="bg-slate-900/50 backdrop-blur-xl rounded-2xl p-6 border border-white/5">
+            <div className="flex items-center gap-3 mb-2">
+              <FileText size={20} className="text-cyan-400" />
+              <span className="text-sm text-white/60">Total Tickets</span>
+            </div>
+            <p className="text-3xl font-bold">{tickets.length}</p>
+          </div>
+
+          <div className="bg-slate-900/50 backdrop-blur-xl rounded-2xl p-6 border border-white/5">
+            <div className="flex items-center gap-3 mb-2">
+              <Clock size={20} className="text-blue-400" />
+              <span className="text-sm text-white/60">Horas Totales</span>
+            </div>
+            <p className="text-3xl font-bold">{totalHoras.toFixed(2)}</p>
+          </div>
+
+          <div className="flex gap-3">
+            <button
+              onClick={() => { setForm(initialForm()); setSelected(null); setShowModal(true); }}
+              className="flex-1 flex items-center justify-center gap-2 bg-gradient-to-r from-cyan-500 to-blue-600 py-3 rounded-xl font-medium shadow-lg hover:shadow-xl hover:scale-105 transition-all"
             >
-              <XCircle size={18} /> <span>Cancelar</span>
-            </motion.button>
-          )}
+              <Plus size={20} /> Nuevo
+            </button>
+            <button
+              onClick={exportCSV}
+              className="px-4 bg-emerald-500/20 hover:bg-emerald-500/30 rounded-xl transition-all border border-emerald-500/30"
+              title="Exportar CSV"
+            >
+              <Download size={20} className="text-emerald-400" />
+            </button>
+            <label className="px-4 bg-purple-500/20 hover:bg-purple-500/30 rounded-xl transition-all border border-purple-500/30 flex items-center cursor-pointer" title="Importar CSV">
+              <Upload size={20} className="text-purple-400" />
+              <input type="file" accept=".csv" onChange={importCSV} className="hidden" />
+            </label>
+            <button
+              onClick={() => setShowHelp(true)}
+              className="px-4 bg-blue-500/20 hover:bg-blue-500/30 rounded-xl transition-all border border-blue-500/30"
+              title="Ayuda CSV"
+            >
+              <HelpCircle size={20} className="text-blue-400" />
+            </button>
+          </div>
         </div>
-      </motion.form>
 
-      {/* Buscador y acciones */}
-      <div className="flex justify-between items-center max-w-4xl mx-auto mt-8">
-        <div className="relative w-1/2">
-          <Search className="absolute left-3 top-3 text-white/70" size={18} />
-          <input
-            type="text"
-            placeholder="Buscar por actividad..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full pl-10 p-3 rounded-xl bg-white/20 placeholder-white/70 border focus:ring-2 focus:ring-cian outline-none"
-          />
-        </div>
-        <div className="flex space-x-4">
-          <button
-            onClick={exportCSV}
-            className="px-4 py-2 bg-green-500 rounded-lg flex items-center hover:bg-green-600"
-          >
-            <Download size={16} className="mr-2" /> Exportar CSV
-          </button>
-          
-        </div>
-      </div>
-
-      {/* Tabla */}
-      <div className="max-w-6xl mx-auto bg-white/10 backdrop-blur-xl rounded-3xl shadow-2xl p-6 border border-white/30 mt-6">
-        <h2 className="text-xl font-bold mb-4">Tickets Registrados</h2>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-white/10">
-                {Object.keys(initialForm()).map((h) => (
-                  <th key={h} className="p-2 capitalize">
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {filteredTickets.map((t) => (
-                <motion.tr
-                  key={t.id}
-                  onClick={() => handleSelect(t)}
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  className="cursor-pointer hover:bg-white/10 transition"
-                >
-                  {Object.keys(initialForm()).map((h) => (
-                    <td key={h} className="p-2">
-                      {h === "fecha" ? formatDate(t[h]) : t[h]}
+        {/* Tabla de tickets */}
+        <div className="bg-slate-900/50 backdrop-blur-xl rounded-2xl border border-white/5 overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="bg-gradient-to-r from-cyan-500/10 to-blue-600/10 border-b border-white/5">
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-white/70 uppercase">Nº</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-white/70 uppercase">Fecha</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-white/70 uppercase">Actividad</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-white/70 uppercase">Cliente</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-white/70 uppercase">Usuario</th>
+                  <th className="px-4 py-3 text-right text-xs font-semibold text-white/70 uppercase">Minutos</th>
+                  <th className="px-4 py-3 text-right text-xs font-semibold text-white/70 uppercase">Horas</th>
+                  <th className="px-4 py-3 text-center text-xs font-semibold text-white/70 uppercase">Estado</th>
+                  <th className="px-4 py-3 text-right text-xs font-semibold text-white/70 uppercase">Acciones</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5">
+                {tickets.map((t) => (
+                  <motion.tr
+                    key={t.id}
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    className="hover:bg-white/5 transition-colors"
+                  >
+                    <td className="px-4 py-3 text-sm text-white/80">{t.numero || "-"}</td>
+                    <td className="px-4 py-3 text-sm text-white/80">{formatDate(t.fecha)}</td>
+                    <td className="px-4 py-3 text-sm font-medium">{t.actividad}</td>
+                    <td className="px-4 py-3 text-sm text-white/80">{t.cliente}</td>
+                    <td className="px-4 py-3 text-sm text-white/60">{t.usuario_cliente || "-"}</td>
+                    <td className="px-4 py-3 text-sm text-right text-white/80">{t.minutos}</td>
+                    <td className="px-4 py-3 text-sm text-right font-semibold text-cyan-400">{parseFloat(t.horas || 0).toFixed(2)}</td>
+                    <td className="px-4 py-3 text-center">
+                      <span className={`px-3 py-1 rounded-full text-xs font-medium ${
+                        t.estado === "completado" 
+                          ? "bg-emerald-500/20 text-emerald-300" 
+                          : "bg-orange-500/20 text-orange-300"
+                      }`}>
+                        {t.estado}
+                      </span>
                     </td>
-                  ))}
-                </motion.tr>
-              ))}
-            </tbody>
-          </table>
+                    <td className="px-4 py-3">
+                      <div className="flex justify-end gap-2">
+                        <button
+                          onClick={() => handleSelect(t)}
+                          className="p-2 bg-cyan-500/20 hover:bg-cyan-500/30 rounded-lg transition-all"
+                        >
+                          <Edit size={16} className="text-cyan-400" />
+                        </button>
+                        <button
+                          onClick={() => handleDelete(t.id)}
+                          className="p-2 bg-red-500/20 hover:bg-red-500/30 rounded-lg transition-all"
+                        >
+                          <Trash2 size={16} className="text-red-400" />
+                        </button>
+                      </div>
+                    </td>
+                  </motion.tr>
+                ))}
+                {tickets.length === 0 && (
+                  <tr>
+                    <td colSpan="9" className="px-4 py-12 text-center">
+                      <FileText size={48} className="mx-auto text-white/20 mb-3" />
+                      <p className="text-white/40">No hay tickets para mostrar</p>
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
-      </div>
+      </main>
+
+      {/* Modal de formulario */}
+      <AnimatePresence>
+        {showModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          >
+            <motion.form
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              onSubmit={handleSubmit}
+              className="w-full max-w-2xl bg-slate-900/95 backdrop-blur-2xl border border-white/10 rounded-3xl p-8 shadow-2xl max-h-[90vh] overflow-y-auto"
+            >
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="text-2xl font-semibold">
+                  {selected ? "Editar Ticket" : "Nuevo Ticket"}
+                </h3>
+                <button type="button" onClick={handleCancel} className="p-2 hover:bg-white/10 rounded-xl transition-colors">
+                  <X size={24} />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                <div>
+                  <label className="block text-xs text-white/50 mb-2 font-medium">Número</label>
+                  <input
+                    name="numero"
+                    value={form.numero}
+                    onChange={handleFormChange}
+                    className="w-full p-3 rounded-xl bg-white/5 border border-white/10 text-white focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
+                    placeholder="Opcional"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs text-white/50 mb-2 font-medium">Fecha</label>
+                  <input
+                    type="date"
+                    name="fecha"
+                    value={form.fecha}
+                    onChange={handleFormChange}
+                    className="w-full p-3 rounded-xl bg-white/5 border border-white/10 text-white focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
+                    required
+                  />
+                </div>
+
+                <div className="md:col-span-2">
+                  <label className="block text-xs text-white/50 mb-2 font-medium">Actividad *</label>
+                  <input
+                    name="actividad"
+                    value={form.actividad}
+                    onChange={handleFormChange}
+                    className="w-full p-3 rounded-xl bg-white/5 border border-white/10 text-white focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
+                    placeholder="Descripción de la actividad"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs text-white/50 mb-2 font-medium">Cliente *</label>
+                  <input
+                    name="cliente"
+                    value={form.cliente}
+                    onChange={handleFormChange}
+                    className="w-full p-3 rounded-xl bg-white/5 border border-white/10 text-white focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
+                    placeholder="Nombre del cliente"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs text-white/50 mb-2 font-medium">Usuario</label>
+                  <input
+                    name="usuario_cliente"
+                    value={form.usuario_cliente}
+                    onChange={handleFormChange}
+                    className="w-full p-3 rounded-xl bg-white/5 border border-white/10 text-white focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
+                    placeholder="Opcional"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs text-white/50 mb-2 font-medium">Minutos</label>
+                  <input
+                    type="number"
+                    name="minutos"
+                    value={form.minutos}
+                    onChange={handleFormChange}
+                    className="w-full p-3 rounded-xl bg-white/5 border border-white/10 text-white focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
+                    placeholder="0"
+                    min="0"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs text-white/50 mb-2 font-medium">Horas (calculado)</label>
+                  <input
+                    type="text"
+                    name="horas"
+                    value={form.horas}
+                    readOnly
+                    className="w-full p-3 rounded-xl bg-white/10 border border-white/10 text-cyan-400 font-semibold cursor-not-allowed"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs text-white/50 mb-2 font-medium">Estado</label>
+                  <select
+                    name="estado"
+                    value={form.estado}
+                    onChange={handleFormChange}
+                    className="w-full p-3 rounded-xl bg-white/5 border border-white/10 text-white focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
+                  >
+                    <option value="pendiente">Pendiente</option>
+                    <option value="completado">Completado</option>
+                  </select>
+                </div>
+
+                <div className="md:col-span-2">
+                  <label className="block text-xs text-white/50 mb-2 font-medium">Observaciones</label>
+                  <textarea
+                    name="observaciones"
+                    value={form.observaciones}
+                    onChange={handleFormChange}
+                    rows="3"
+                    className="w-full p-3 rounded-xl bg-white/5 border border-white/10 text-white focus:outline-none focus:ring-2 focus:ring-cyan-500/50 resize-none"
+                    placeholder="Notas adicionales..."
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={handleCancel}
+                  className="flex-1 px-6 py-3 bg-white/5 hover:bg-white/10 rounded-xl transition-all font-medium"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 px-6 py-3 bg-gradient-to-r from-cyan-500 to-blue-600 rounded-xl shadow-lg hover:shadow-xl hover:scale-105 transition-all font-medium"
+                >
+                  {selected ? "Actualizar" : "Crear Ticket"}
+                </button>
+              </div>
+            </motion.form>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Modal de ayuda CSV */}
+      <AnimatePresence>
+        {showHelp && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="w-full max-w-2xl bg-slate-900/95 backdrop-blur-2xl border border-white/10 rounded-3xl p-8 shadow-2xl"
+            >
+              <div className="flex items-center justify-between mb-6">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-blue-500/20 flex items-center justify-center">
+                    <HelpCircle size={20} className="text-blue-400" />
+                  </div>
+                  <h3 className="text-2xl font-semibold">Formato de CSV</h3>
+                </div>
+                <button onClick={() => setShowHelp(false)} className="p-2 hover:bg-white/10 rounded-xl transition-colors">
+                  <X size={24} />
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                <p className="text-white/70">El archivo CSV debe tener estos campos (separados por comas):</p>
+                
+                <div className="bg-white/5 rounded-xl p-4 border border-white/10 font-mono text-sm overflow-x-auto">
+                  <div className="text-cyan-400">Numero Ticket,Fecha,Actividad,Minutos,Horas,Cliente,Usuario,Observaciones</div>
+                  <div className="text-white/60 mt-2">#251420,3/11/2025,Problema con SAP,120,2.00,BARENTZ GT,Alejandro Rodas,Revisión</div>
+                </div>
+
+                <div className="space-y-2 text-sm">
+                  <p className="text-white/90 font-medium">📋 Campos aceptados (case-insensitive):</p>
+                  <ul className="space-y-1 text-white/70 ml-4">
+                    <li>• <span className="text-cyan-400">Numero Ticket</span> o <span className="text-cyan-400">Numero</span></li>
+                    <li>• <span className="text-cyan-400">Fecha</span> (formato: DD/MM/YYYY)</li>
+                    <li>• <span className="text-cyan-400">Actividad</span></li>
+                    <li>• <span className="text-cyan-400">Minutos</span> (acepta comas: 0,5 o puntos: 0.5)</li>
+                    <li>• <span className="text-cyan-400">Horas</span> (acepta comas: 2,5 o puntos: 2.5)</li>
+                    <li>• <span className="text-cyan-400">Cliente</span></li>
+                    <li>• <span className="text-cyan-400">Usuario</span> o <span className="text-cyan-400">Usuario del cliente (Nombre)</span></li>
+                    <li>• <span className="text-cyan-400">Observaciones</span></li>
+                  </ul>
+                </div>
+
+                <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-4">
+                  <p className="text-blue-300 text-sm">
+                    💡 <strong>Tip:</strong> Las filas vacías o sin actividad/cliente serán ignoradas automáticamente.
+                    Todos los tickets importados se marcarán como "completado" por defecto.
+                  </p>
+                </div>
+              </div>
+
+              <button
+                onClick={() => setShowHelp(false)}
+                className="w-full mt-6 px-6 py-3 bg-gradient-to-r from-cyan-500 to-blue-600 rounded-xl font-medium hover:scale-105 transition-all"
+              >
+                Entendido
+              </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <footer className="text-center text-xs text-white/40 py-6 border-t border-white/5">
+        <p>© 2025 Serproc Consulting. Todos los derechos reservados.</p>
+      </footer>
     </div>
   );
 }

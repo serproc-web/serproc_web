@@ -1,10 +1,32 @@
+// models/ticket.model.js
 import pool from "../config/db.js";
 
-export async function getTicketsByEmpleado(empleadoId) {
-  const [rows] = await pool.query(
-    "SELECT * FROM tickets WHERE user_id = ? ORDER BY fecha DESC",
-    [empleadoId]
-  );
+export async function getTicketsByEmpleado(empleadoId, filters = {}) {
+  let query = "SELECT * FROM tickets WHERE user_id = ?";
+  const params = [empleadoId];
+
+  // Filtro por mes (formato: YYYY-MM)
+  if (filters.month) {
+    query += " AND DATE_FORMAT(fecha, '%Y-%m') = ?";
+    params.push(filters.month);
+  }
+
+  // Filtro por estado
+  if (filters.estado && filters.estado !== "all") {
+    query += " AND estado = ?";
+    params.push(filters.estado);
+  }
+
+  // Filtro por búsqueda en actividad o cliente
+  if (filters.q) {
+    query += " AND (actividad LIKE ? OR cliente LIKE ? OR usuario_cliente LIKE ?)";
+    const searchTerm = `%${filters.q}%`;
+    params.push(searchTerm, searchTerm, searchTerm);
+  }
+
+  query += " ORDER BY fecha DESC";
+
+  const [rows] = await pool.query(query, params);
   return rows;
 }
 
@@ -28,14 +50,14 @@ export async function createTicket(ticket) {
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       user_id,
-      numero,
+      numero || null,
       fecha,
-      actividad,
-      cliente,
-      usuario_cliente,
-      minutos,
-      horas,
-      observaciones,
+      actividad || null,
+      cliente || null,
+      usuario_cliente || null,
+      minutos || 0,
+      horas || 0,
+      observaciones || null,
       estado || "pendiente",
     ]
   );
@@ -67,8 +89,8 @@ export async function updateTicket(id, field, value) {
         actividad || null,
         cliente || null,
         usuario_cliente || null,
-        minutos || null,
-        horas || null,
+        minutos || 0,
+        horas || 0,
         observaciones || null,
         estado || "pendiente",
         id,
@@ -77,7 +99,7 @@ export async function updateTicket(id, field, value) {
     return;
   }
 
-  // modo antiguo (un solo campo)
+  // Actualizar un solo campo
   const allowed = [
     "numero",
     "fecha",
@@ -89,8 +111,32 @@ export async function updateTicket(id, field, value) {
     "observaciones",
     "estado",
   ];
+  
   if (!allowed.includes(field)) {
     throw new Error("Campo no permitido");
   }
+  
   await pool.query(`UPDATE tickets SET ${field} = ? WHERE id = ?`, [value, id]);
+}
+
+export async function deleteTicket(id) {
+  const [existing] = await pool.query("SELECT id FROM tickets WHERE id = ?", [id]);
+  if (existing.length === 0) {
+    throw new Error("Ticket no encontrado");
+  }
+  
+  await pool.query("DELETE FROM tickets WHERE id = ?", [id]);
+  return true;
+}
+
+// Obtener meses disponibles para filtros
+export async function getAvailableMonths(empleadoId) {
+  const [rows] = await pool.query(
+    `SELECT DISTINCT DATE_FORMAT(fecha, '%Y-%m') as month
+     FROM tickets
+     WHERE user_id = ?
+     ORDER BY month DESC`,
+    [empleadoId]
+  );
+  return rows.map(r => r.month);
 }

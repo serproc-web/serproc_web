@@ -1,14 +1,41 @@
+// routes/ticket.routes.js
 import { Router } from "express";
-import { getTicketsByEmpleado, createTicket, updateTicket } from "../models/ticket.model.js";
+import { 
+  getTicketsByEmpleado, 
+  createTicket, 
+  updateTicket,
+  deleteTicket,
+  getAvailableMonths
+} from "../models/ticket.model.js";
 
 const router = Router();
 
-// Obtener tickets por empleado
+// Obtener tickets por empleado con filtros
 router.get("/:empleadoId", async (req, res) => {
   try {
-    const tickets = await getTicketsByEmpleado(req.params.empleadoId);
+    const { empleadoId } = req.params;
+    const { month, estado, q } = req.query;
+    
+    const filters = {};
+    if (month) filters.month = month;
+    if (estado) filters.estado = estado;
+    if (q) filters.q = q;
+
+    const tickets = await getTicketsByEmpleado(empleadoId, filters);
     res.json(tickets);
   } catch (err) {
+    console.error("Error obteniendo tickets:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Obtener meses disponibles para el selector
+router.get("/:empleadoId/months", async (req, res) => {
+  try {
+    const months = await getAvailableMonths(req.params.empleadoId);
+    res.json(months);
+  } catch (err) {
+    console.error("Error obteniendo meses:", err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -17,8 +44,9 @@ router.get("/:empleadoId", async (req, res) => {
 router.post("/", async (req, res) => {
   try {
     const id = await createTicket(req.body);
-    res.status(201).json({ message: "Ticket creado", id });
+    res.status(201).json({ message: "Ticket creado exitosamente", id });
   } catch (err) {
+    console.error("Error creando ticket:", err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -32,15 +60,29 @@ router.post("/bulk", async (req, res) => {
       return res.status(400).json({ error: "No se enviaron tickets" });
     }
 
+    let created = 0;
+    let errors = 0;
+
     for (const t of tickets) {
-      await createTicket({
-        ...t,
-        estado: "completado", // ✅ siempre en completado
-      });
+      try {
+        await createTicket({
+          ...t,
+          estado: t.estado || "completado",
+        });
+        created++;
+      } catch (err) {
+        console.error("Error en ticket individual:", err);
+        errors++;
+      }
     }
 
-    res.json({ message: `Se cargaron ${tickets.length} tickets correctamente` });
+    res.json({ 
+      message: `Se cargaron ${created} tickets correctamente`,
+      created,
+      errors
+    });
   } catch (err) {
+    console.error("Error en carga masiva:", err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -50,8 +92,25 @@ router.patch("/:id", async (req, res) => {
   try {
     const { field, value } = req.body;
     await updateTicket(req.params.id, field, value);
-    res.json({ message: "Ticket actualizado" });
+    res.json({ message: "Ticket actualizado exitosamente" });
   } catch (err) {
+    console.error("Error actualizando ticket:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Eliminar ticket
+router.delete("/:id", async (req, res) => {
+  try {
+    await deleteTicket(req.params.id);
+    res.json({ message: "Ticket eliminado exitosamente" });
+  } catch (err) {
+    console.error("Error eliminando ticket:", err);
+    
+    if (err.message?.includes("no encontrado")) {
+      return res.status(404).json({ error: err.message });
+    }
+    
     res.status(500).json({ error: err.message });
   }
 });

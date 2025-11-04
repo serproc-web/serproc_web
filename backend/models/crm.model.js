@@ -1,6 +1,7 @@
+// models/crm.model.js
 import pool from "../config/db.js";
 
-/* Helpers */
+/* ===== HELPERS ===== */
 function whereDates({ from, to, status }) {
   const where = ["t.fecha BETWEEN ? AND ?"];
   const params = [from, to];
@@ -59,7 +60,6 @@ export async function getStatsByWorker({ from, to, status }) {
 export async function getTimeseries({ from, to, status, interval }) {
   const { where, params } = whereDates({ from, to, status });
 
-  // agrupación por día / semana / mes usando columna `fecha`
   let bucketExpr = "DATE_FORMAT(t.fecha, '%Y-%m-%d')";
   if (interval === "week") bucketExpr = "DATE_FORMAT(t.fecha, '%x-W%v')";
   if (interval === "month") bucketExpr = "DATE_FORMAT(t.fecha, '%Y-%m')";
@@ -78,70 +78,131 @@ export async function getTimeseries({ from, to, status, interval }) {
   return rows.map(r => ({ bucket: r.bucket, cantidad: Number(r.cantidad || 0) }));
 }
 
-/* ===== USERS (CRUD simple) ===== */
+/* ===== USERS CRUD ===== */
 export async function listUsers(q = "") {
-  const like = `%${q}%`;
-  const [rows] = await pool.query(
-    `
-    SELECT id, name, email, role, phone,
-           notify_enabled, notify_interval, notify_panel, notify_email
+  let query = `
+    SELECT id, name, email, role, phone, 
+           notify_enabled, notify_interval, notify_panel, notify_email,
+           created_at
     FROM users
-    WHERE ? = '' OR (name LIKE ? OR email LIKE ? OR role LIKE ?)
-    ORDER BY name
-    `,
-    [q, like, like, like]
-  );
+  `;
+  const params = [];
+
+  if (q && q.trim() !== "") {
+    query += " WHERE name LIKE ? OR email LIKE ? OR role LIKE ?";
+    const searchTerm = `%${q}%`;
+    params.push(searchTerm, searchTerm, searchTerm);
+  }
+
+  query += " ORDER BY created_at DESC";
+
+  const [rows] = await pool.query(query, params);
   return rows;
 }
 
-export async function createUser(u) {
-  const [res] = await pool.query(
-    `
-    INSERT INTO users (name, email, role, phone,
-      notify_enabled, notify_interval, notify_panel, notify_email, password)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `,
+export async function createUser(data) {
+  const {
+    name,
+    email,
+    password, // Ya viene hasheada desde el router
+    role = "client",
+    phone = null,
+    notify_enabled = 1,
+    notify_interval = "24h",
+    notify_panel = 1,
+    notify_email = 1,
+  } = data;
+
+  const [result] = await pool.query(
+    `INSERT INTO users (
+      name, email, password, role, phone,
+      notify_enabled, notify_interval, notify_panel, notify_email
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
-      u.name, u.email, u.role || "client", u.phone || null,
-      u.notify_enabled ? 1 : 0,
-      u.notify_interval || "24h",
-      u.notify_panel ? 1 : 0,
-      u.notify_email ? 1 : 0,
-      u.password || null, // asume hashing en otra capa si lo necesitas
+      name,
+      email,
+      password,
+      role,
+      phone,
+      notify_enabled,
+      notify_interval,
+      notify_panel,
+      notify_email,
     ]
   );
-  return res.insertId;
+
+  return result.insertId;
 }
 
-export async function updateUser(id, u) {
-  // si no manda password, no lo toques
-  if (u.password && u.password.trim()) {
-    await pool.query(
-      `UPDATE users SET name=?, email=?, role=?, phone=?,
-        notify_enabled=?, notify_interval=?, notify_panel=?, notify_email=?, password=?
-       WHERE id=?`,
-      [
-        u.name, u.email, u.role, u.phone || null,
-        u.notify_enabled ? 1 : 0, u.notify_interval || "24h",
-        u.notify_panel ? 1 : 0, u.notify_email ? 1 : 0,
-        u.password, id,
-      ]
-    );
-  } else {
-    await pool.query(
-      `UPDATE users SET name=?, email=?, role=?, phone=?,
-        notify_enabled=?, notify_interval=?, notify_panel=?, notify_email=?
-       WHERE id=?`,
-      [
-        u.name, u.email, u.role, u.phone || null,
-        u.notify_enabled ? 1 : 0, u.notify_interval || "24h",
-        u.notify_panel ? 1 : 0, u.notify_email ? 1 : 0,
-        id,
-      ]
-    );
+export async function updateUser(id, data) {
+  // Verificar que el usuario existe
+  const [existing] = await pool.query("SELECT id FROM users WHERE id = ?", [id]);
+  if (existing.length === 0) {
+    throw new Error("Usuario no encontrado");
   }
+
+  // Construir UPDATE dinámicamente solo con los campos enviados
+  const updates = [];
+  const values = [];
+
+  if (data.name !== undefined) {
+    updates.push("name = ?");
+    values.push(data.name);
+  }
+  if (data.email !== undefined) {
+    updates.push("email = ?");
+    values.push(data.email);
+  }
+  if (data.password !== undefined) {
+    // Ya viene hasheada desde el router
+    updates.push("password = ?");
+    values.push(data.password);
+  }
+  if (data.role !== undefined) {
+    updates.push("role = ?");
+    values.push(data.role);
+  }
+  if (data.phone !== undefined) {
+    updates.push("phone = ?");
+    values.push(data.phone || null);
+  }
+  if (data.notify_enabled !== undefined) {
+    updates.push("notify_enabled = ?");
+    values.push(data.notify_enabled);
+  }
+  if (data.notify_interval !== undefined) {
+    updates.push("notify_interval = ?");
+    values.push(data.notify_interval);
+  }
+  if (data.notify_panel !== undefined) {
+    updates.push("notify_panel = ?");
+    values.push(data.notify_panel);
+  }
+  if (data.notify_email !== undefined) {
+    updates.push("notify_email = ?");
+    values.push(data.notify_email);
+  }
+
+  if (updates.length === 0) {
+    throw new Error("No hay campos para actualizar");
+  }
+
+  values.push(id);
+
+  await pool.query(
+    `UPDATE users SET ${updates.join(", ")} WHERE id = ?`,
+    values
+  );
+
+  return true;
 }
 
 export async function deleteUser(id) {
+  const [existing] = await pool.query("SELECT id FROM users WHERE id = ?", [id]);
+  if (existing.length === 0) {
+    throw new Error("Usuario no encontrado");
+  }
+
   await pool.query("DELETE FROM users WHERE id = ?", [id]);
+  return true;
 }
