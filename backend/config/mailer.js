@@ -16,12 +16,12 @@ const FROM = (() => {
   const raw =
     process.env.SMTP_FROM ||
     process.env.MAIL_FROM ||
-    (process.env.SMTP_USER ? `${BRAND.name} <${process.env.SES_SMTP_USER}>` : "no-reply@example.com");
+    (process.env.SMTP_USER ? `${BRAND.name} <${process.env.SMTP_USER}>` : "no-reply@example.com");
   if (/<.+>/.test(raw)) return raw;
   return `${BRAND.name} <${raw}>`;
 })();
 
-/* ─────────────────────────────  Brevo API (opcional)  ───────────────────────────── */
+/* ─────────────────────────────  Brevo API (HTTP)  ───────────────────────────── */
 
 async function sendViaBrevo({ to, subject, text, html, attachments = [] }) {
   if (!process.env.BREVO_API_KEY) throw new Error("BREVO_API_KEY no configurada");
@@ -66,10 +66,10 @@ async function sendViaBrevo({ to, subject, text, html, attachments = [] }) {
       throw new Error(`Email sender '${senderEmail}' no verificado en Brevo`);
     throw new Error(`Brevo ${res.status}: ${responseText}`);
   }
-  return true;
+  return { ok: true, provider: "brevo" };
 }
 
-/* ─────────────────────────────  SMTP (Brevo 587 STARTTLS)  ───────────────────────────── */
+/* ─────────────────────────────  SMTP (587 STARTTLS / 465 SSL)  ───────────────────────────── */
 
 const smtpPort = Number(process.env.SMTP_PORT || 587);
 const isSSL465 = smtpPort === 465;
@@ -77,8 +77,8 @@ const isSSL465 = smtpPort === 465;
 const smtpTransporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST || "smtp-relay.brevo.com",
   port: smtpPort,
-  secure: isSSL465,          // true solo para 465 (SSL puro). Brevo usa 587 -> false
-  requireTLS: !isSSL465,     // STARTTLS obligatorio cuando no es 465
+  secure: isSSL465,          // true solo para 465 (SSL puro)
+  requireTLS: !isSSL465,     // STARTTLS cuando no es 465
   auth:
     process.env.SMTP_USER && process.env.SMTP_PASS
       ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
@@ -99,11 +99,9 @@ async function sendViaSMTP({ to, subject, text, html, attachments = [] }) {
     html: html || undefined,
     text: (text || toPlainText(html)).trim() || undefined,
     attachments,
-    headers: {
-      "X-Entity-Ref-ID": cryptoRandom(),
-    },
+    headers: { "X-Entity-Ref-ID": cryptoRandom() },
   });
-  return { id: info.messageId };
+  return { ok: true, provider: "smtp", id: info.messageId };
 }
 
 /* ─────────────────────────────  Helpers  ───────────────────────────── */
