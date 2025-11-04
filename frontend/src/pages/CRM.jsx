@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
   AreaChart, Area, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
-  XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, CartesianGrid, FileDown
+  XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, CartesianGrid
 } from "recharts";
 import { toast } from "react-hot-toast";
 import api from "../utils/api";
@@ -12,7 +12,7 @@ import { Link } from "react-router-dom";
 import {
   Plus, Edit, Trash2, X, Search, Home, Users as UsersIcon, 
   ChartBar, CalendarRange, TrendingUp, Activity, Target,
-  Award, Clock, Zap, Eye, EyeOff
+  Award, Clock, Zap, Eye, EyeOff, FileDown
 } from "lucide-react";
 
 const COLORS = ["#06b6d4", "#2563eb", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899"];
