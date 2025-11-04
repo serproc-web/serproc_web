@@ -174,8 +174,8 @@ export default function CRM() {
     try {
       toast.loading("Generando reporte CRM...");
       
-      const { jsPDF } = await import("jspdf");
-      await import("jspdf-autotable");
+      const jsPDF = (await import("jspdf")).default;
+      const autoTable = (await import("jspdf-autotable")).default;
       
       const doc = new jsPDF();
       const pageWidth = doc.internal.pageSize.width;
