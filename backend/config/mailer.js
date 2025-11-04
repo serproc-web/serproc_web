@@ -16,6 +16,10 @@ const BRAND = {
 /* ─────────────────────────────  Brevo API  ───────────────────────────── */
 
 async function sendViaBrevo({ to, subject, text, html, attachments = [] }) {
+  if (!process.env.BREVO_API_KEY) {
+    throw new Error("BREVO_API_KEY no configurada");
+  }
+
   const url = "https://api.brevo.com/v3/smtp/email";
 
   const mappedAttachments = (attachments || []).map((a) => {
@@ -31,9 +35,10 @@ async function sendViaBrevo({ to, subject, text, html, attachments = [] }) {
     };
   });
 
+  // Extraer email y nombre del sender
   const fromMatch = BRAND.from.match(/^"?([^"<]+)"?\s*<(.+?)>$/);
   const senderName = fromMatch ? fromMatch[1].trim() : BRAND.name;
-  const senderEmail = fromMatch ? fromMatch[2] : BRAND.from;
+  const senderEmail = fromMatch ? fromMatch[2] : BRAND.from.replace(/[<>"]/g, "").trim();
 
   const body = {
     sender: {
@@ -42,27 +47,42 @@ async function sendViaBrevo({ to, subject, text, html, attachments = [] }) {
     },
     to: [{ email: to }],
     subject,
-    htmlContent: html || undefined,
-    textContent: text || undefined,
-    attachment: mappedAttachments.length ? mappedAttachments : undefined,
+    htmlContent: html || text || "<p>Email sin contenido</p>",
+    textContent: text || toPlainText(html),
   };
+
+  // Solo agregar attachments si existen
+  if (mappedAttachments.length > 0) {
+    body.attachment = mappedAttachments;
+  }
+
+  console.log(`[mail:brevo] 📤 Enviando a ${to} desde ${senderEmail}...`);
 
   const res = await fetch(url, {
     method: "POST",
     headers: {
       "api-key": process.env.BREVO_API_KEY,
       "content-type": "application/json",
+      accept: "application/json",
     },
     body: JSON.stringify(body),
   });
 
+  const responseText = await res.text();
+
   if (!res.ok) {
-    const errText = await res.text().catch(() => "");
-    throw new Error(`Brevo ${res.status}: ${errText}`);
+    // Errores comunes de Brevo
+    if (res.status === 401) {
+      throw new Error("❌ BREVO_API_KEY inválida o expirada");
+    }
+    if (res.status === 400 && responseText.includes("sender")) {
+      throw new Error(`❌ Email sender '${senderEmail}' no verificado en Brevo. Verifica tu cuenta.`);
+    }
+    throw new Error(`Brevo ${res.status}: ${responseText}`);
   }
 
-  const result = await res.json();
-  console.log(`[mail:brevo] ✅ ${subject} -> ${to} (${result.messageId || "sent"})`);
+  const result = JSON.parse(responseText);
+  console.log(`[mail:brevo] ✅ ${subject} -> ${to} (ID: ${result.messageId || "sent"})`);
   return result;
 }
 
@@ -73,7 +93,7 @@ const secure = String(process.env.SMTP_PORT || "587") === "465";
 const smtpTransporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST || "smtp-relay.brevo.com",
   port: Number(process.env.SMTP_PORT || 587),
-  secure,
+  secure: false, // Brevo usa 587 sin SSL directo
   auth:
     process.env.SMTP_USER && process.env.SMTP_PASS
       ? {
@@ -84,12 +104,15 @@ const smtpTransporter = nodemailer.createTransport({
   pool: true,
   maxConnections: 2,
   maxMessages: 50,
-  connectionTimeout: 7000,
-  socketTimeout: 7000,
-  requireTLS: !secure,
+  connectionTimeout: 10000, // más tiempo
+  socketTimeout: 10000,
+  requireTLS: true, // STARTTLS obligatorio para Brevo
   tls: {
     minVersion: "TLSv1.2",
+    rejectUnauthorized: false, // por si hay problemas con certificados
   },
+  debug: true, // ACTIVA ESTO PARA VER QUÉ PASA
+  logger: true, // logs detallados
 });
 
 async function sendViaSMTP({ to, subject, text, html, attachments = [] }) {
