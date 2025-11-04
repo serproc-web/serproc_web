@@ -1,30 +1,29 @@
 // mailer.js
-import nodemailer from "nodemailer";
 import dotenv from "dotenv";
 
 dotenv.config();
 
-/* ─────────────────────────────  Configuración base  ───────────────────────────── */
+/* ─────────────────────────────  Configuración  ───────────────────────────── */
 
-const PROVIDER = (process.env.EMAIL_PROVIDER || "smtp").toLowerCase(); // 'smtp' | 'brevo'
 const BRAND = {
   name: process.env.BRAND_NAME || "Serproc Consulting",
   url: process.env.BRAND_URL || "https://serproc.onrender.com",
   logo: process.env.BRAND_LOGO || "",
 };
+
 const FROM = (() => {
-  const raw =
-    process.env.SMTP_FROM ||
-    process.env.MAIL_FROM ||
-    (process.env.SMTP_USER ? `${BRAND.name} <${process.env.SMTP_USER}>` : "no-reply@example.com");
+  const raw = process.env.EMAIL_FROM || `${BRAND.name} <no-reply@example.com>`;
   if (/<.+>/.test(raw)) return raw;
   return `${BRAND.name} <${raw}>`;
 })();
 
-/* ─────────────────────────────  Brevo API (HTTP)  ───────────────────────────── */
+/* ─────────────────────────────  Brevo API  ───────────────────────────── */
 
 async function sendViaBrevo({ to, subject, text, html, attachments = [] }) {
-  if (!process.env.BREVO_API_KEY) throw new Error("BREVO_API_KEY no configurada");
+  if (!process.env.BREVO_API_KEY) {
+    throw new Error("BREVO_API_KEY no configurada");
+  }
+
   const url = "https://api.brevo.com/v3/smtp/email";
 
   const mappedAttachments = (attachments || []).map((a) => {
@@ -45,8 +44,8 @@ async function sendViaBrevo({ to, subject, text, html, attachments = [] }) {
     to: [{ email: to }],
     subject,
     htmlContent: html || undefined,
-    textContent: (text || toPlainText(html)).trim() || undefined,
-    attachment: mappedAttachments.length ? mappedAttachments : undefined,
+    textContent: text || toPlainText(html) || undefined,
+    ...(mappedAttachments.length > 0 && { attachment: mappedAttachments }),
   };
 
   const res = await fetch(url, {
@@ -60,48 +59,19 @@ async function sendViaBrevo({ to, subject, text, html, attachments = [] }) {
   });
 
   const responseText = await res.text().catch(() => "");
+  
   if (!res.ok) {
-    if (res.status === 401) throw new Error("BREVO_API_KEY inválida o expirada");
-    if (res.status === 400 && responseText.includes("sender"))
+    if (res.status === 401) {
+      throw new Error("BREVO_API_KEY inválida o expirada");
+    }
+    if (res.status === 400 && responseText.includes("sender")) {
       throw new Error(`Email sender '${senderEmail}' no verificado en Brevo`);
+    }
     throw new Error(`Brevo ${res.status}: ${responseText}`);
   }
-  return { ok: true, provider: "brevo" };
-}
 
-/* ─────────────────────────────  SMTP (587 STARTTLS / 465 SSL)  ───────────────────────────── */
-
-const smtpPort = Number(process.env.SMTP_PORT || 587);
-const isSSL465 = smtpPort === 465;
-
-const smtpTransporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST || "smtp-relay.brevo.com",
-  port: smtpPort,
-  secure: isSSL465,          // true solo para 465 (SSL puro)
-  requireTLS: !isSSL465,     // STARTTLS cuando no es 465
-  auth:
-    process.env.SMTP_USER && process.env.SMTP_PASS
-      ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
-      : undefined,
-  tls: { minVersion: "TLSv1.2" },
-  pool: true,
-  maxConnections: 2,
-  maxMessages: 50,
-  connectionTimeout: 15000,
-  socketTimeout: 15000,
-});
-
-async function sendViaSMTP({ to, subject, text, html, attachments = [] }) {
-  const info = await smtpTransporter.sendMail({
-    from: FROM,
-    to,
-    subject,
-    html: html || undefined,
-    text: (text || toPlainText(html)).trim() || undefined,
-    attachments,
-    headers: { "X-Entity-Ref-ID": cryptoRandom() },
-  });
-  return { ok: true, provider: "smtp", id: info.messageId };
+  const data = JSON.parse(responseText);
+  return { ok: true, provider: "brevo", id: data.messageId };
 }
 
 /* ─────────────────────────────  Helpers  ───────────────────────────── */
@@ -121,7 +91,13 @@ function cryptoRandom() {
 }
 
 const escapeHtml = (text) =>
-  String(text).replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
+  String(text).replace(/[&<>"']/g, (m) => ({ 
+    "&": "&amp;", 
+    "<": "&lt;", 
+    ">": "&gt;", 
+    '"': "&quot;", 
+    "'": "&#39;" 
+  }[m]));
 
 /* ─────────────────────────────  Template HTML  ───────────────────────────── */
 
@@ -182,22 +158,23 @@ async function deliver({ to, subject, html, text, attachments = [] }) {
   if (String(process.env.DISABLE_EMAIL || "false") === "true") {
     return { disabled: true };
   }
-  const opts = { to, subject, html, text, attachments };
 
+  const opts = { to, subject, html, text, attachments };
   let lastErr;
+
   for (let i = 0; i < 2; i++) {
     try {
-      if (PROVIDER === "brevo") return await sendViaBrevo(opts);
-      return await sendViaSMTP(opts);
+      return await sendViaBrevo(opts);
     } catch (e) {
       lastErr = e;
       if (i === 0) await new Promise((r) => setTimeout(r, 1000));
     }
   }
+
   throw lastErr;
 }
 
-/* ─────────────────────────────  Emails listos para usar  ───────────────────────────── */
+/* ─────────────────────────────  Emails predefinidos  ───────────────────────────── */
 
 export async function sendVerificationEmail(to, code) {
   const contentHTML = `
@@ -237,8 +214,17 @@ export async function sendContactEmail({ name, email, phone, message }) {
     </table>
   `;
 
-  const html = emailTemplate({ title: "📬 Nuevo mensaje de contacto", preheader: `Mensaje de ${name}`, contentHTML });
-  return deliver({ to: dest, subject: `📩 Nuevo mensaje de contacto - ${name}`, html });
+  const html = emailTemplate({ 
+    title: "📬 Nuevo mensaje de contacto", 
+    preheader: `Mensaje de ${name}`, 
+    contentHTML 
+  });
+
+  return deliver({ 
+    to: dest, 
+    subject: `📩 Nuevo mensaje de contacto - ${name}`, 
+    html 
+  });
 }
 
 /* ─────────────────────────────  API pública  ───────────────────────────── */
@@ -249,14 +235,12 @@ export async function sendMail(opts) {
 
 export async function mailHealth() {
   try {
-    if (PROVIDER === "brevo") {
-      if (!process.env.BREVO_API_KEY) return { ok: false, provider: "brevo", error: "BREVO_API_KEY no configurada" };
-      return { ok: true, provider: "brevo" };
+    if (!process.env.BREVO_API_KEY) {
+      return { ok: false, provider: "brevo", error: "BREVO_API_KEY no configurada" };
     }
-    await smtpTransporter.verify();
-    return { ok: true, provider: "smtp", host: process.env.SMTP_HOST, port: process.env.SMTP_PORT };
+    return { ok: true, provider: "brevo" };
   } catch (e) {
-    return { ok: false, provider: PROVIDER, error: e.message };
+    return { ok: false, provider: "brevo", error: e.message };
   }
 }
 
