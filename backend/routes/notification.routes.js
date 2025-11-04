@@ -9,7 +9,7 @@ import {
   saveNotificationSettings,
   markSent,
 } from "../models/notification.model.js";
-import { transporter } from "../config/mailer.js";
+import { sendMail } from "../config/mailer.js";
 
 const router = Router();
 
@@ -63,10 +63,10 @@ router.post("/:id/resend", async (req, res) => {
 
   if (enviarCorreo && n.destinatario) {
     try {
-      await transporter.sendMail({
-        from: `"Serproc Consulting" <${process.env.EMAIL_USER}>`,
+      // Usar el nuevo sistema de mailer (soporta Brevo API o SMTP)
+      await sendMail({
         to: n.destinatario,
-        subject: `[${n.tipo || "Notificación"}] Serproc`,
+        subject: `[${n.tipo || "Notificación"}] Serproc Consulting`,
         html: `
           <div style="font-family: Inter, Arial, sans-serif; padding:24px; background:#0b1220;">
             <div style="max-width:560px;margin:auto;background:#0f172a;border:1px solid rgba(255,255,255,.1);border-radius:16px;">
@@ -75,19 +75,39 @@ router.post("/:id/resend", async (req, res) => {
                 <p style="margin:8px 0 0 0;color:#94a3b8;font-size:14px;">Enviada por Serproc Consulting</p>
               </div>
               <div style="padding:16px 24px 24px 24px;color:#cbd5e1;line-height:1.6;">
-                ${n.mensaje || ""}
+                ${n.mensaje || "Sin mensaje"}
               </div>
               <div style="padding:16px 24px;color:#94a3b8;border-top:1px solid rgba(255,255,255,.08);font-size:12px;">
-                Enviado automáticamente según su configuración.
+                Enviado automáticamente según su configuración. <br>
+                <span style="color:#64748b;">© ${new Date().getFullYear()} Serproc Consulting</span>
               </div>
             </div>
           </div>
         `,
+        text: `
+${n.tipo || "Notificación"} - Serproc Consulting
+
+${n.mensaje || "Sin mensaje"}
+
+---
+Enviado automáticamente según su configuración.
+© ${new Date().getFullYear()} Serproc Consulting
+        `.trim(),
       });
+
       await markSent(n.id, "correo");
-      return res.json({ message: "Notificación reenviada por correo" });
+      console.log(`[notification] ✅ Email enviado a ${n.destinatario} - Tipo: ${n.tipo}`);
+      return res.json({ 
+        message: "Notificación reenviada por correo",
+        destinatario: n.destinatario,
+        tipo: n.tipo
+      });
     } catch (err) {
-      return res.status(500).json({ error: "Error enviando correo", detail: err.message });
+      console.error(`[notification] ❌ Error enviando a ${n.destinatario}:`, err.message);
+      return res.status(500).json({ 
+        error: "Error enviando correo", 
+        detail: err.message 
+      });
     }
   }
 
