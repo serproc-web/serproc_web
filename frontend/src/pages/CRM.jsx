@@ -174,8 +174,8 @@ export default function CRM() {
     try {
       toast.loading("Generando reporte CRM...");
       
-      const jsPDF = (await import("jspdf")).default;
-      const autoTable = (await import("jspdf-autotable")).default;
+      const { jsPDF } = await import("jspdf");
+      await import("jspdf-autotable");
       
       const doc = new jsPDF();
       const pageWidth = doc.internal.pageSize.width;
@@ -279,7 +279,7 @@ export default function CRM() {
         s.cantidad
       ]);
 
-      doc.autoTable({
+      autoTable(doc, {
         head: [["Período", "Cantidad"]],
         body: seriesData,
         startY: finalY + 6,
