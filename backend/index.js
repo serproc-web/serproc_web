@@ -12,9 +12,11 @@ import contactusRoutes from "./routes/contactus.routes.js";
 import profileRoutes from "./routes/profile.routes.js";
 import notificationRoutes from "./routes/notification.routes.js";
 import reminderRoutes from "./routes/reminder.routes.js";
-import "./jobs/reminders.job.js";
 import configurationRoutes from "./routes/configuration.routes.js";
 import crmRoutes from "./routes/crm.routes.js";
+
+// 🔥 NUEVO: Importar el scheduler de notificaciones
+import { startNotificationScheduler } from "./jobs/reminders.job.js";
 
 dotenv.config();
 
@@ -99,9 +101,20 @@ app.use("/api/crm", crmRoutes);
 app.use("/api/config", configurationRoutes);
 
 /* ------------------------------ Health & ping ------------------------------ */
-app.get("/health", (_req, res) => res.send("ok"));
+app.get("/health", (_req, res) => 
+  res.json({ 
+    status: "ok",
+    notifications: "active",
+    timestamp: new Date().toISOString()
+  })
+);
+
 app.get("/api/ping", (_req, res) =>
-  res.json({ status: "ok", db: "running" })
+  res.json({ 
+    status: "ok", 
+    db: "running",
+    notifications: "active"
+  })
 );
 
 /* ---------------------------- 404 y error global --------------------------- */
@@ -116,12 +129,26 @@ app.use((err, _req, res, _next) => {
 /* --------------------------------- Start ---------------------------------- */
 app.listen(PORT, async () => {
   console.log(`🚀 Server listening on port ${PORT}`);
+  
   try {
     await seedAdmin();
     console.log("✅ seedAdmin listo");
   } catch (e) {
     console.error("❌ seedAdmin error:", e.message);
   }
+
+  // 🔥 NUEVO: Iniciar el scheduler de notificaciones
+  try {
+    startNotificationScheduler();
+    console.log("🔔 Sistema de notificaciones activo");
+    console.log(`📧 Emails configurados con ${process.env.BREVO_API_KEY ? 'Brevo' : 'sin API key'}`);
+  } catch (e) {
+    console.error("❌ Error iniciando scheduler de notificaciones:", e.message);
+  }
 });
+
+// 🔥 OPCIONAL: Para testing (descomentar si necesitas testing cada minuto)
+// import { startTestScheduler } from "./jobs/reminders.job.js";
+// startTestScheduler();
 
 export default app;
