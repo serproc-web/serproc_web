@@ -9,8 +9,8 @@ import CRM from "./pages/CRM";
 import Notifications from "./pages/Notifications";
 import Profile from "./pages/Profile";
 import Contact from "./pages/Contact";
-import ProtectedRoute from "./components/ProtectedRoute"; // 👈 nuevo
 import Configuration from "./pages/Configuration";
+import ProtectedRoute from "./components/ProtectedRoute";
 
 function App() {
   const token = localStorage.getItem("token");
@@ -56,16 +56,14 @@ function App() {
             </ProtectedRoute>
           }
         />
-        // frontend/src/App.jsx (ya lo tienes así)
         <Route
-          path="/configuration"
+          path="/configuracion"
           element={
             <ProtectedRoute allowedRoles={["admin"]}>
               <Configuration />
             </ProtectedRoute>
           }
         />
-
 
         {/* Worker only */}
         <Route

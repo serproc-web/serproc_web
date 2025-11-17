@@ -78,6 +78,52 @@ export async function getTimeseries({ from, to, status, interval }) {
   return rows.map(r => ({ bucket: r.bucket, cantidad: Number(r.cantidad || 0) }));
 }
 
+// 🔥 Nueva función para obtener tickets pendientes con detalle del trabajador
+export async function getPendingTickets({ from, to }) {
+  const params = [from, to];
+  
+  const [rows] = await pool.query(
+    `
+    SELECT 
+      t.id,
+      t.numero,
+      t.fecha,
+      t.actividad,
+      t.cliente,
+      t.usuario_cliente,
+      t.minutos,
+      t.horas,
+      t.observaciones,
+      t.estado,
+      u.id AS worker_id,
+      u.name AS worker_name,
+      u.email AS worker_email
+    FROM tickets t
+    JOIN users u ON u.id = t.user_id
+    WHERE t.fecha BETWEEN ? AND ?
+      AND t.estado = 'pendiente'
+    ORDER BY t.fecha DESC, t.created_at DESC
+    `,
+    params
+  );
+
+  return rows.map(r => ({
+    id: r.id,
+    numero: r.numero,
+    fecha: r.fecha,
+    actividad: r.actividad,
+    cliente: r.cliente,
+    usuario_cliente: r.usuario_cliente,
+    minutos: Number(r.minutos || 0),
+    horas: Number(r.horas || 0),
+    observaciones: r.observaciones,
+    estado: r.estado,
+    worker_id: r.worker_id,
+    worker_name: r.worker_name,
+    worker_email: r.worker_email,
+  }));
+}
+
 /* ===== USERS CRUD ===== */
 export async function listUsers(q = "") {
   let query = `

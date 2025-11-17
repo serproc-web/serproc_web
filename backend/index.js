@@ -15,8 +15,9 @@ import reminderRoutes from "./routes/reminder.routes.js";
 import configurationRoutes from "./routes/configuration.routes.js";
 import crmRoutes from "./routes/crm.routes.js";
 
-// 🔥 NUEVO: Importar el scheduler de notificaciones
-import { startNotificationScheduler } from "./jobs/reminders.job.js";
+// 🔥 CORREGIDO: Importar el scheduler de notificaciones
+// El archivo reminders.job.js ya inicia los cron jobs automáticamente al importarse
+import "./jobs/reminders.job.js";
 
 dotenv.config();
 
@@ -137,18 +138,12 @@ app.listen(PORT, async () => {
     console.error("❌ seedAdmin error:", e.message);
   }
 
-  // 🔥 NUEVO: Iniciar el scheduler de notificaciones
-  try {
-    startNotificationScheduler();
-    console.log("🔔 Sistema de notificaciones activo");
-    console.log(`📧 Emails configurados con ${process.env.BREVO_API_KEY ? 'Brevo' : 'sin API key'}`);
-  } catch (e) {
-    console.error("❌ Error iniciando scheduler de notificaciones:", e.message);
-  }
+  // 🔥 CORREGIDO: Los cron jobs se inician automáticamente al importar el archivo
+  console.log("🔔 Sistema de notificaciones activo");
+  console.log("⏰ Cron jobs iniciados:");
+  console.log("  • Actualización de recordatorios vencidos (cada minuto)");
+  console.log("  • Notificaciones de tickets pendientes (cada hora)");
+  console.log(`📧 Emails configurados con ${process.env.BREVO_API_KEY ? 'Brevo' : 'sin API key'}`);
 });
-
-// 🔥 OPCIONAL: Para testing (descomentar si necesitas testing cada minuto)
-// import { startTestScheduler } from "./jobs/reminders.job.js";
-// startTestScheduler();
 
 export default app;

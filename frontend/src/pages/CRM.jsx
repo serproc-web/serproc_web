@@ -12,7 +12,7 @@ import { Link } from "react-router-dom";
 import {
   Plus, Edit, Trash2, X, Search, Home, Users as UsersIcon, 
   ChartBar, CalendarRange, TrendingUp, Activity, Target,
-  Award, Clock, Zap, Eye, EyeOff
+  Award, Clock, Zap, Eye, EyeOff, FileText, User
 } from "lucide-react";
 
 const COLORS = ["#06b6d4", "#2563eb", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899"];
@@ -41,6 +41,11 @@ export default function CRM() {
   const [overview, setOverview] = useState({ pendientes: 0, completados: 0, total: 0 });
   const [byWorker, setByWorker] = useState([]);
   const [series, setSeries] = useState([]);
+
+  // 🔥 Modal de tickets pendientes
+  const [showPendingModal, setShowPendingModal] = useState(false);
+  const [pendingTickets, setPendingTickets] = useState([]);
+  const [loadingPending, setLoadingPending] = useState(false);
 
   // Users CRUD
   const [users, setUsers] = useState([]);
@@ -92,6 +97,21 @@ export default function CRM() {
     }
   }
 
+  // 🔥 Función para cargar tickets pendientes con detalle
+  async function fetchPendingTickets() {
+    setLoadingPending(true);
+    try {
+      const res = await api.get("/crm/tickets/pending", { params: filters });
+      setPendingTickets(Array.isArray(res.data) ? res.data : []);
+      setShowPendingModal(true);
+    } catch (err) {
+      toast.error("Error cargando tickets pendientes");
+      console.error(err);
+    } finally {
+      setLoadingPending(false);
+    }
+  }
+
   async function fetchUsers() {
     try {
       const res = await api.get("/crm/users", { params: { q } });
@@ -113,7 +133,7 @@ export default function CRM() {
   const startCreate = () => { resetUserForm(); setOpenModal(true); };
   const startEdit = (u) => { 
     setEditingId(u.id); 
-    setUserForm({ ...u, password: "" }); // No enviamos el hash actual
+    setUserForm({ ...u, password: "" });
     setOpenModal(true); 
   };
 
@@ -122,7 +142,6 @@ export default function CRM() {
     try {
       const payload = { ...userForm };
       
-      // Si estamos editando y no se cambió la contraseña, no la enviamos
       if (editingId && !payload.password) {
         delete payload.password;
       }
@@ -168,6 +187,15 @@ export default function CRM() {
   const completionRate = overview.total > 0 
     ? ((overview.completados / overview.total) * 100).toFixed(1)
     : 0;
+
+  const formatDate = (date) => {
+    if (!date) return "";
+    return new Date(date).toLocaleDateString("es", { 
+      day: "2-digit", 
+      month: "short", 
+      year: "numeric" 
+    });
+  };
 
   return (
     <div className="min-h-screen flex flex-col bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 font-inter text-white">
@@ -251,7 +279,7 @@ export default function CRM() {
                     name="interval" 
                     value={filters.interval} 
                     onChange={onChangeFilter}
-                    className="w-full p-2.5 rounded-xl bg-slate-800/80 border border-white/10 text-white text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/50 cursor-pointer hover:bg-slate-800 transition-colors appearance-none bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTIiIGhlaWdodD0iOCIgdmlld0JveD0iMCAwIDEyIDgiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTEgMS41TDYgNi41TDExIDEuNSIgc3Ryb2tlPSIjOTlBMUI0IiBzdHJva2Utd2lkdGg9IjEuNSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+PC9zdmc+')] bg-[right_0.75rem_center] bg-no-repeat pr-10"
+                    className="w-full p-2.5 rounded-xl bg-slate-800/80 border border-white/10 text-white text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/50 cursor-pointer hover:bg-slate-800 transition-colors appearance-none pr-10"
                     style={{
                       backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%239CA3AF' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`,
                       backgroundPosition: 'right 0.5rem center',
@@ -292,7 +320,9 @@ export default function CRM() {
                     label: "Pendientes", 
                     value: overview.pendientes,
                     color: "from-orange-500 to-amber-500",
-                    bgColor: "bg-orange-500/10"
+                    bgColor: "bg-orange-500/10",
+                    clickable: true,
+                    onClick: fetchPendingTickets
                   },
                   { 
                     icon: Award, 
@@ -323,21 +353,27 @@ export default function CRM() {
                     transition={{ delay: i * 0.05 }}
                     whileHover={{ y: -4, scale: 1.02 }}
                     className="relative group"
+                    onClick={m.clickable ? m.onClick : undefined}
+                    style={{ cursor: m.clickable ? 'pointer' : 'default' }}
                   >
-                    <div className="bg-slate-900/50 backdrop-blur-xl rounded-2xl p-6 border border-white/5 hover:border-white/10 transition-all">
+                    <div className={`bg-slate-900/50 backdrop-blur-xl rounded-2xl p-6 border border-white/5 hover:border-white/10 transition-all ${m.clickable ? 'hover:bg-slate-900/70' : ''}`}>
                       <div className={`w-12 h-12 rounded-xl ${m.bgColor} flex items-center justify-center mb-4`}>
                         <m.icon size={24} className={`bg-gradient-to-r ${m.color} text-transparent bg-clip-text`} />
                       </div>
                       <p className="text-white/50 text-xs font-medium mb-1">{m.label}</p>
                       <p className="text-3xl font-bold tracking-tight">{m.value}</p>
+                      {m.clickable && (
+                        <p className="text-xs text-cyan-400 mt-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                          Clic para ver detalles →
+                        </p>
+                      )}
                     </div>
                   </motion.div>
                 ))}
               </div>
 
-              {/* Gráficas principales */}
+              {/* Gráficas (resto del código igual) */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* Serie temporal - Area Chart */}
                 <div className="bg-slate-900/50 backdrop-blur-xl rounded-2xl p-6 border border-white/5">
                   <div className="flex items-center justify-between mb-6">
                     <div>
@@ -384,7 +420,6 @@ export default function CRM() {
                   </div>
                 </div>
 
-                {/* Pie Chart */}
                 <div className="bg-slate-900/50 backdrop-blur-xl rounded-2xl p-6 border border-white/5">
                   <div className="flex items-center justify-between mb-6">
                     <div>
@@ -428,9 +463,7 @@ export default function CRM() {
                 </div>
               </div>
 
-              {/* Rendimiento por trabajador */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* Bar Chart Horizontal */}
                 <div className="bg-slate-900/50 backdrop-blur-xl rounded-2xl p-6 border border-white/5">
                   <div className="flex items-center justify-between mb-6">
                     <div>
@@ -465,7 +498,6 @@ export default function CRM() {
                   </div>
                 </div>
 
-                {/* Radar Chart */}
                 <div className="bg-slate-900/50 backdrop-blur-xl rounded-2xl p-6 border border-white/5">
                   <div className="flex items-center justify-between mb-6">
                     <div>
@@ -506,7 +538,6 @@ export default function CRM() {
               </div>
             </motion.section>
           ) : (
-            // ------- USERS -------
             <motion.section 
               key="users" 
               initial={{ opacity: 0, y: 20 }} 
@@ -514,7 +545,6 @@ export default function CRM() {
               exit={{ opacity: 0, y: 20 }} 
               className="space-y-6"
             >
-              {/* Barra de búsqueda */}
               <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
                 <div className="flex items-center gap-3 bg-slate-900/50 backdrop-blur-xl rounded-xl p-3 flex-1 border border-white/5">
                   <Search size={20} className="text-white/40" />
@@ -533,30 +563,17 @@ export default function CRM() {
                 </button>
               </div>
 
-              {/* Tabla de usuarios */}
               <div className="bg-slate-900/50 backdrop-blur-xl rounded-2xl border border-white/5 overflow-hidden">
                 <div className="overflow-x-auto">
                   <table className="w-full">
                     <thead>
                       <tr className="bg-gradient-to-r from-cyan-500/10 to-blue-600/10 border-b border-white/5">
-                        <th className="px-6 py-4 text-left text-xs font-semibold text-white/70 uppercase tracking-wider">
-                          Usuario
-                        </th>
-                        <th className="px-6 py-4 text-left text-xs font-semibold text-white/70 uppercase tracking-wider">
-                          Email
-                        </th>
-                        <th className="px-6 py-4 text-left text-xs font-semibold text-white/70 uppercase tracking-wider">
-                          Rol
-                        </th>
-                        <th className="px-6 py-4 text-left text-xs font-semibold text-white/70 uppercase tracking-wider">
-                          Teléfono
-                        </th>
-                        <th className="px-6 py-4 text-left text-xs font-semibold text-white/70 uppercase tracking-wider">
-                          Notificaciones
-                        </th>
-                        <th className="px-6 py-4 text-right text-xs font-semibold text-white/70 uppercase tracking-wider">
-                          Acciones
-                        </th>
+                        <th className="px-6 py-4 text-left text-xs font-semibold text-white/70 uppercase tracking-wider">Usuario</th>
+                        <th className="px-6 py-4 text-left text-xs font-semibold text-white/70 uppercase tracking-wider">Email</th>
+                        <th className="px-6 py-4 text-left text-xs font-semibold text-white/70 uppercase tracking-wider">Rol</th>
+                        <th className="px-6 py-4 text-left text-xs font-semibold text-white/70 uppercase tracking-wider">Teléfono</th>
+                        <th className="px-6 py-4 text-left text-xs font-semibold text-white/70 uppercase tracking-wider">Notificaciones</th>
+                        <th className="px-6 py-4 text-right text-xs font-semibold text-white/70 uppercase tracking-wider">Acciones</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-white/5">
@@ -632,187 +649,341 @@ export default function CRM() {
                   </table>
                 </div>
               </div>
-
-              {/* Modal de usuario */}
-              <AnimatePresence>
-                {openModal && (
-                  <motion.div 
-                    initial={{ opacity: 0 }} 
-                    animate={{ opacity: 1 }} 
-                    exit={{ opacity: 0 }}
-                    className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-                  >
-                    <motion.form
-                      initial={{ scale: 0.9, opacity: 0 }} 
-                      animate={{ scale: 1, opacity: 1 }} 
-                      exit={{ scale: 0.9, opacity: 0 }}
-                      onSubmit={saveUser}
-                      className="w-full max-w-2xl bg-slate-900/95 backdrop-blur-2xl border border-white/10 rounded-3xl p-8 shadow-2xl"
-                    >
-                      {/* Header */}
-                      <div className="flex items-center justify-between mb-8">
-                        <div>
-                          <h3 className="text-2xl font-semibold">
-                            {editingId ? "Editar usuario" : "Crear usuario"}
-                          </h3>
-                          <p className="text-sm text-white/50 mt-1">
-                            {editingId ? "Actualiza la información del usuario" : "Completa los datos del nuevo usuario"}
-                          </p>
-                        </div>
-                        <button 
-                          type="button" 
-                          onClick={() => setOpenModal(false)}
-                          className="p-2 hover:bg-white/10 rounded-xl transition-colors"
-                        >
-                          <X size={24} />
-                        </button>
-                      </div>
-
-                      {/* Form Fields */}
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-                        <div>
-                          <label className="block text-xs text-white/50 mb-2 font-medium">Nombre completo</label>
-                          <input 
-                            className="w-full p-3 rounded-xl bg-white/5 border border-white/10 text-white focus:outline-none focus:ring-2 focus:ring-cyan-500/50 transition-all" 
-                            placeholder="Juan Pérez"
-                            value={userForm.name} 
-                            onChange={e=>setUserForm({...userForm, name:e.target.value})} 
-                            required
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-xs text-white/50 mb-2 font-medium">Correo electrónico</label>
-                          <input 
-                            className="w-full p-3 rounded-xl bg-white/5 border border-white/10 text-white focus:outline-none focus:ring-2 focus:ring-cyan-500/50 transition-all" 
-                            placeholder="correo@ejemplo.com"
-                            type="email" 
-                            value={userForm.email} 
-                            onChange={e=>setUserForm({...userForm, email:e.target.value})} 
-                            required
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-xs text-white/50 mb-2 font-medium">Teléfono</label>
-                          <input 
-                            className="w-full p-3 rounded-xl bg-white/5 border border-white/10 text-white focus:outline-none focus:ring-2 focus:ring-cyan-500/50 transition-all" 
-                            placeholder="+502 1234-5678"
-                            value={userForm.phone||""} 
-                            onChange={e=>setUserForm({...userForm, phone:e.target.value})}
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-xs text-white/50 mb-2 font-medium">Rol</label>
-                          <select 
-                            className="w-full p-3 rounded-xl bg-white/5 border border-white/10 text-white focus:outline-none focus:ring-2 focus:ring-cyan-500/50 transition-all cursor-pointer"
-                            value={userForm.role} 
-                            onChange={e=>setUserForm({...userForm, role:e.target.value})}
-                          >
-                            <option value="client">Cliente</option>
-                            <option value="worker">Trabajador</option>
-                            <option value="admin">Administrador</option>
-                          </select>
-                        </div>
-
-                        <div>
-                          <label className="block text-xs text-white/50 mb-2 font-medium">Intervalo de notificación</label>
-                          <select 
-                            className="w-full p-3 rounded-xl bg-white/5 border border-white/10 text-white focus:outline-none focus:ring-2 focus:ring-cyan-500/50 transition-all cursor-pointer"
-                            value={userForm.notify_interval}
-                            onChange={e=>setUserForm({...userForm, notify_interval:e.target.value})}
-                          >
-                            <option value="24h">Cada 24 horas</option>
-                            <option value="48h">Cada 48 horas</option>
-                            <option value="72h">Cada 72 horas</option>
-                          </select>
-                        </div>
-
-                        <div>
-                          <label className="block text-xs text-white/50 mb-2 font-medium">
-                            {editingId ? "Nueva contraseña (opcional)" : "Contraseña"}
-                          </label>
-                          <div className="relative">
-                            <input 
-                              className="w-full p-3 pr-10 rounded-xl bg-white/5 border border-white/10 text-white focus:outline-none focus:ring-2 focus:ring-cyan-500/50 transition-all" 
-                              type={showPassword ? "text" : "password"}
-                              placeholder={editingId ? "Dejar en blanco para no cambiar" : "••••••••"}
-                              value={userForm.password} 
-                              onChange={e=>setUserForm({...userForm, password:e.target.value})}
-                              required={!editingId}
-                            />
-                            <button
-                              type="button"
-                              onClick={() => setShowPassword(!showPassword)}
-                              className="absolute right-3 top-1/2 -translate-y-1/2 text-white/40 hover:text-white/70 transition-colors"
-                            >
-                              {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Notificaciones */}
-                      <div className="bg-white/5 rounded-xl p-4 mb-6 border border-white/5">
-                        <p className="text-sm font-medium mb-3 text-white/70">Configuración de notificaciones</p>
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                          <label className="flex items-center gap-3 p-3 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 transition-all cursor-pointer">
-                            <input 
-                              type="checkbox" 
-                              checked={!!userForm.notify_enabled}
-                              onChange={e=>setUserForm({...userForm, notify_enabled: e.target.checked ? 1 : 0})}
-                              className="w-4 h-4 accent-cyan-500"
-                            />
-                            <span className="text-sm">Activadas</span>
-                          </label>
-                          
-                          <label className="flex items-center gap-3 p-3 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 transition-all cursor-pointer">
-                            <input 
-                              type="checkbox" 
-                              checked={!!userForm.notify_panel}
-                              onChange={e=>setUserForm({...userForm, notify_panel: e.target.checked ? 1 : 0})}
-                              className="w-4 h-4 accent-cyan-500"
-                            />
-                            <span className="text-sm">Panel</span>
-                          </label>
-                          
-                          <label className="flex items-center gap-3 p-3 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 transition-all cursor-pointer">
-                            <input 
-                              type="checkbox" 
-                              checked={!!userForm.notify_email}
-                              onChange={e=>setUserForm({...userForm, notify_email: e.target.checked ? 1 : 0})}
-                              className="w-4 h-4 accent-cyan-500"
-                            />
-                            <span className="text-sm">Correo</span>
-                          </label>
-                        </div>
-                      </div>
-
-                      {/* Actions */}
-                      <div className="flex justify-end gap-3">
-                        <button 
-                          type="button" 
-                          onClick={()=>setOpenModal(false)}
-                          className="px-6 py-3 bg-white/5 hover:bg-white/10 rounded-xl transition-all font-medium"
-                        >
-                          Cancelar
-                        </button>
-                        <button 
-                          type="submit"
-                          className="px-6 py-3 bg-gradient-to-r from-cyan-500 to-blue-600 rounded-xl shadow-lg hover:shadow-xl hover:scale-105 transition-all font-medium"
-                        >
-                          {editingId ? "Actualizar" : "Crear usuario"}
-                        </button>
-                      </div>
-                    </motion.form>
-                  </motion.div>
-                )}
-              </AnimatePresence>
             </motion.section>
           )}
         </AnimatePresence>
       </main>
+
+      {/* 🔥 Modal de Tickets Pendientes */}
+      <AnimatePresence>
+        {showPendingModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            onClick={() => setShowPendingModal(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              onClick={(e) => e.stopPropagation()}
+              className="w-full max-w-5xl bg-slate-900/95 backdrop-blur-2xl border border-white/10 rounded-3xl p-8 shadow-2xl max-h-[85vh] overflow-y-auto"
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between mb-6 sticky top-0 bg-slate-900/95 pb-4 border-b border-white/5">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-xl bg-orange-500/20 flex items-center justify-center">
+                    <Clock size={24} className="text-orange-400" />
+                  </div>
+                  <div>
+                    <h3 className="text-2xl font-semibold">Tickets Pendientes</h3>
+                    <p className="text-sm text-white/50 mt-1">
+                      {pendingTickets.length} ticket{pendingTickets.length !== 1 ? 's' : ''} por completar
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowPendingModal(false)}
+                  className="p-2 hover:bg-white/10 rounded-xl transition-colors"
+                >
+                  <X size={24} />
+                </button>
+              </div>
+
+              {/* Lista de tickets */}
+              {loadingPending ? (
+                <div className="flex items-center justify-center h-40">
+                  <div className="animate-spin w-8 h-8 border-4 border-cyan-500 border-t-transparent rounded-full" />
+                </div>
+              ) : pendingTickets.length === 0 ? (
+                <div className="text-center py-12">
+                  <Clock size={48} className="mx-auto text-white/20 mb-3" />
+                  <p className="text-white/40">No hay tickets pendientes en este período</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {pendingTickets.map((ticket) => (
+                    <motion.div
+                      key={ticket.id}
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="bg-white/5 hover:bg-white/10 rounded-xl p-5 border border-white/5 hover:border-orange-500/30 transition-all"
+                    >
+                      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+                        {/* Trabajador */}
+                        <div className="lg:col-span-3">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center font-semibold text-sm">
+                              {ticket.worker_name?.charAt(0).toUpperCase() || 'U'}
+                            </div>
+                            <div>
+                              <p className="text-xs text-white/50">Trabajador</p>
+                              <p className="font-medium text-sm">{ticket.worker_name || 'Sin asignar'}</p>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Info del ticket */}
+                        <div className="lg:col-span-6 space-y-2">
+                          <div className="flex items-start gap-2">
+                            <FileText size={16} className="text-cyan-400 mt-0.5 flex-shrink-0" />
+                            <div className="flex-1">
+                              <p className="text-xs text-white/50">Actividad</p>
+                              <p className="font-medium">{ticket.actividad}</p>
+                            </div>
+                          </div>
+                          
+                          <div className="grid grid-cols-2 gap-4 text-xs">
+                            <div>
+                              <span className="text-white/50">Cliente: </span>
+                              <span className="text-white/80">{ticket.cliente}</span>
+                            </div>
+                            {ticket.usuario_cliente && (
+                              <div>
+                                <span className="text-white/50">Usuario: </span>
+                                <span className="text-white/80">{ticket.usuario_cliente}</span>
+                              </div>
+                            )}
+                          </div>
+
+                          {ticket.observaciones && (
+                            <div className="text-xs">
+                              <span className="text-white/50">Obs: </span>
+                              <span className="text-white/70">{ticket.observaciones}</span>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Metadata */}
+                        <div className="lg:col-span-3 flex flex-col justify-between">
+                          <div className="space-y-2">
+                            <div className="flex items-center gap-2 text-xs">
+                              <CalendarRange size={14} className="text-white/40" />
+                              <span className="text-white/60">{formatDate(ticket.fecha)}</span>
+                            </div>
+                            
+                            <div className="flex items-center gap-2 text-xs">
+                              <Clock size={14} className="text-white/40" />
+                              <span className="text-white/60">
+                                {ticket.minutos}min ({parseFloat(ticket.horas || 0).toFixed(2)}h)
+                              </span>
+                            </div>
+
+                            {ticket.numero && (
+                              <div className="inline-block px-2 py-1 bg-cyan-500/10 rounded text-xs text-cyan-300">
+                                #{ticket.numero}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </motion.div>
+                  ))}
+                </div>
+              )}
+
+              {/* Footer con estadísticas */}
+              {pendingTickets.length > 0 && (
+                <div className="mt-6 pt-6 border-t border-white/5">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div className="bg-white/5 rounded-xl p-4 border border-white/5">
+                      <p className="text-xs text-white/50 mb-1">Total Tickets</p>
+                      <p className="text-2xl font-bold">{pendingTickets.length}</p>
+                    </div>
+                    <div className="bg-white/5 rounded-xl p-4 border border-white/5">
+                      <p className="text-xs text-white/50 mb-1">Total Minutos</p>
+                      <p className="text-2xl font-bold">
+                        {pendingTickets.reduce((sum, t) => sum + (Number(t.minutos) || 0), 0)}
+                      </p>
+                    </div>
+                    <div className="bg-white/5 rounded-xl p-4 border border-white/5">
+                      <p className="text-xs text-white/50 mb-1">Total Horas</p>
+                      <p className="text-2xl font-bold">
+                        {pendingTickets.reduce((sum, t) => sum + (Number(t.horas) || 0), 0).toFixed(2)}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Modal de usuario (código existente) */}
+      <AnimatePresence>
+        {openModal && (
+          <motion.div 
+            initial={{ opacity: 0 }} 
+            animate={{ opacity: 1 }} 
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          >
+            <motion.form
+              initial={{ scale: 0.9, opacity: 0 }} 
+              animate={{ scale: 1, opacity: 1 }} 
+              exit={{ scale: 0.9, opacity: 0 }}
+              onSubmit={saveUser}
+              className="w-full max-w-2xl bg-slate-900/95 backdrop-blur-2xl border border-white/10 rounded-3xl p-8 shadow-2xl max-h-[90vh] overflow-y-auto"
+            >
+              <div className="flex items-center justify-between mb-8">
+                <div>
+                  <h3 className="text-2xl font-semibold">
+                    {editingId ? "Editar usuario" : "Crear usuario"}
+                  </h3>
+                  <p className="text-sm text-white/50 mt-1">
+                    {editingId ? "Actualiza la información del usuario" : "Completa los datos del nuevo usuario"}
+                  </p>
+                </div>
+                <button 
+                  type="button" 
+                  onClick={() => setOpenModal(false)}
+                  className="p-2 hover:bg-white/10 rounded-xl transition-colors"
+                >
+                  <X size={24} />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                <div>
+                  <label className="block text-xs text-white/50 mb-2 font-medium">Nombre completo</label>
+                  <input 
+                    className="w-full p-3 rounded-xl bg-white/5 border border-white/10 text-white focus:outline-none focus:ring-2 focus:ring-cyan-500/50 transition-all" 
+                    placeholder="Juan Pérez"
+                    value={userForm.name} 
+                    onChange={e=>setUserForm({...userForm, name:e.target.value})} 
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs text-white/50 mb-2 font-medium">Correo electrónico</label>
+                  <input 
+                    className="w-full p-3 rounded-xl bg-white/5 border border-white/10 text-white focus:outline-none focus:ring-2 focus:ring-cyan-500/50 transition-all" 
+                    placeholder="correo@ejemplo.com"
+                    type="email" 
+                    value={userForm.email} 
+                    onChange={e=>setUserForm({...userForm, email:e.target.value})} 
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs text-white/50 mb-2 font-medium">Teléfono</label>
+                  <input 
+                    className="w-full p-3 rounded-xl bg-white/5 border border-white/10 text-white focus:outline-none focus:ring-2 focus:ring-cyan-500/50 transition-all" 
+                    placeholder="+502 1234-5678"
+                    value={userForm.phone||""} 
+                    onChange={e=>setUserForm({...userForm, phone:e.target.value})}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs text-white/50 mb-2 font-medium">Rol</label>
+                  <select 
+                    className="w-full p-3 rounded-xl bg-white/5 border border-white/10 text-white focus:outline-none focus:ring-2 focus:ring-cyan-500/50 transition-all cursor-pointer"
+                    value={userForm.role} 
+                    onChange={e=>setUserForm({...userForm, role:e.target.value})}
+                  >
+                    <option value="client">Cliente</option>
+                    <option value="worker">Trabajador</option>
+                    <option value="admin">Administrador</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs text-white/50 mb-2 font-medium">Intervalo de notificación</label>
+                  <select 
+                    className="w-full p-3 rounded-xl bg-white/5 border border-white/10 text-white focus:outline-none focus:ring-2 focus:ring-cyan-500/50 transition-all cursor-pointer"
+                    value={userForm.notify_interval}
+                    onChange={e=>setUserForm({...userForm, notify_interval:e.target.value})}
+                  >
+                    <option value="24h">Cada 24 horas</option>
+                    <option value="48h">Cada 48 horas</option>
+                    <option value="72h">Cada 72 horas</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs text-white/50 mb-2 font-medium">
+                    {editingId ? "Nueva contraseña (opcional)" : "Contraseña"}
+                  </label>
+                  <div className="relative">
+                    <input 
+                      className="w-full p-3 pr-10 rounded-xl bg-white/5 border border-white/10 text-white focus:outline-none focus:ring-2 focus:ring-cyan-500/50 transition-all" 
+                      type={showPassword ? "text" : "password"}
+                      placeholder={editingId ? "Dejar en blanco para no cambiar" : "••••••••"}
+                      value={userForm.password} 
+                      onChange={e=>setUserForm({...userForm, password:e.target.value})}
+                      required={!editingId}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-white/40 hover:text-white/70 transition-colors"
+                    >
+                      {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-white/5 rounded-xl p-4 mb-6 border border-white/5">
+                <p className="text-sm font-medium mb-3 text-white/70">Configuración de notificaciones</p>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <label className="flex items-center gap-3 p-3 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 transition-all cursor-pointer">
+                    <input 
+                      type="checkbox" 
+                      checked={!!userForm.notify_enabled}
+                      onChange={e=>setUserForm({...userForm, notify_enabled: e.target.checked ? 1 : 0})}
+                      className="w-4 h-4 accent-cyan-500"
+                    />
+                    <span className="text-sm">Activadas</span>
+                  </label>
+                  
+                  <label className="flex items-center gap-3 p-3 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 transition-all cursor-pointer">
+                    <input 
+                      type="checkbox" 
+                      checked={!!userForm.notify_panel}
+                      onChange={e=>setUserForm({...userForm, notify_panel: e.target.checked ? 1 : 0})}
+                      className="w-4 h-4 accent-cyan-500"
+                    />
+                    <span className="text-sm">Panel</span>
+                  </label>
+                  
+                  <label className="flex items-center gap-3 p-3 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 transition-all cursor-pointer">
+                    <input 
+                      type="checkbox" 
+                      checked={!!userForm.notify_email}
+                      onChange={e=>setUserForm({...userForm, notify_email: e.target.checked ? 1 : 0})}
+                      className="w-4 h-4 accent-cyan-500"
+                    />
+                    <span className="text-sm">Correo</span>
+                  </label>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-3">
+                <button 
+                  type="button" 
+                  onClick={()=>setOpenModal(false)}
+                  className="px-6 py-3 bg-white/5 hover:bg-white/10 rounded-xl transition-all font-medium"
+                >
+                  Cancelar
+                </button>
+                <button 
+                  type="submit"
+                  className="px-6 py-3 bg-gradient-to-r from-cyan-500 to-blue-600 rounded-xl shadow-lg hover:shadow-xl hover:scale-105 transition-all font-medium"
+                >
+                  {editingId ? "Actualizar" : "Crear usuario"}
+                </button>
+              </div>
+            </motion.form>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <footer className="text-center text-xs text-white/40 py-6 border-t border-white/5">
         <p>© 2025 Serproc Consulting. Todos los derechos reservados.</p>

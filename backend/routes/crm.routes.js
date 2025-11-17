@@ -5,6 +5,7 @@ import {
   getStatsOverview,
   getStatsByWorker,
   getTimeseries,
+  getPendingTickets,
   listUsers,
   createUser,
   updateUser,
@@ -44,6 +45,18 @@ router.get("/stats/timeseries", async (req, res) => {
   } catch (error) {
     console.error("Error en stats/timeseries:", error);
     res.status(500).json({ error: "Error obteniendo serie temporal" });
+  }
+});
+
+// 🔥 Nuevo endpoint para obtener tickets pendientes con detalle
+router.get("/tickets/pending", async (req, res) => {
+  try {
+    const { from, to } = req.query;
+    const tickets = await getPendingTickets({ from, to });
+    res.json(tickets);
+  } catch (error) {
+    console.error("Error en tickets/pending:", error);
+    res.status(500).json({ error: "Error obteniendo tickets pendientes" });
   }
 });
 

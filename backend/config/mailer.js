@@ -202,7 +202,7 @@ export async function resendVerificationEmail(to, code) {
 }
 
 export async function sendContactEmail({ name, email, phone, message }) {
-  const dest = process.env.SUPPORT_TO || "admin@serproc.com";
+  const dest = process.env.SUPPORT_TO || "serproc.noreply@gmail.com";
 
   const contentHTML = `
     <p><strong>📩 Nuevo mensaje desde el formulario de contacto</strong></p>
